@@ -460,7 +460,7 @@ pub struct BinEntry {
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BinaryInfo {
     pub core: CoreEntry,
-    pub bin: BinEntry,
+    pub bin: BinEntry,  // Sometimes not provided. TODO: Populate only checksums
 }
 
 impl ExtractionJob {
@@ -667,6 +667,60 @@ impl FileToBeProcessed {
         output_filepath.clone()
     }
 
+    pub fn process_mode(&self, r2p: &mut R2Pipe, job_type: &ExtractionJobType) {
+        
+        let job_type_suffix = self.get_job_type_suffix(job_type);
+        // Use temporary name to keep track of incomplete extraction
+        let tmp_job_type_suffix = format!("{}.__part", job_type_suffix).to_string();
+        let tmp_output_path = self.get_output_filepath(&tmp_job_type_suffix);
+
+        match job_type {
+            ExtractionJobType::BinInfo => self.extract_binary_info(r2p, tmp_job_type_suffix),
+            ExtractionJobType::RegisterBehaviour => {
+                self.extract_register_behaviour(r2p, tmp_job_type_suffix)
+            }
+            ExtractionJobType::FunctionXrefs => {
+                self.extract_function_xrefs(r2p, tmp_job_type_suffix)
+            }
+            ExtractionJobType::CFG => self.extract_func_cfgs(r2p, tmp_job_type_suffix),
+            ExtractionJobType::CallGraphs => {
+                self.extract_function_call_graphs(r2p, tmp_job_type_suffix)
+            }
+            ExtractionJobType::FuncInfo => self.extract_function_info(r2p, tmp_job_type_suffix),
+            ExtractionJobType::FunctionVariables => {
+                self.extract_function_variables(r2p, tmp_job_type_suffix)
+            }
+            ExtractionJobType::Decompilation => {
+                self.extract_decompilation(r2p, tmp_job_type_suffix)
+            }
+            ExtractionJobType::PCodeFunc => {
+                self.extract_pcode_function(r2p, tmp_job_type_suffix)
+            }
+            ExtractionJobType::PCodeBB => {
+                self.extract_pcode_basic_block(r2p, tmp_job_type_suffix)
+            }
+            ExtractionJobType::LocalVariableXrefs => {
+                self.extract_local_variable_xrefs(r2p, tmp_job_type_suffix)
+            }
+            ExtractionJobType::GlobalStrings => {
+                self.extract_global_strings(r2p, tmp_job_type_suffix)
+            }
+            ExtractionJobType::FunctionZignatures => {
+                self.extract_function_zignatures(r2p, tmp_job_type_suffix)
+            }
+            ExtractionJobType::FunctionBytes => {
+                self.extract_function_bytes(r2p, tmp_job_type_suffix)
+            }
+        }
+
+        // Apply final output file name when extraction is done
+        let output_path = self.get_output_filepath(&job_type_suffix);
+        std::fs::rename(&tmp_output_path, &output_path).expect(&format!(
+            "Failed to rename temporary path {:?}",
+            tmp_output_path
+        ));
+    }
+
     pub fn process_all_modes(&self) {
         info!(
             "Starting extraction for {} job types on {:?}",
@@ -687,6 +741,7 @@ impl FileToBeProcessed {
         for job_type in &self.job_types {
             info!("Processing job type: {:?}", job_type);
 
+            // Check if the extracted data file already exists
             let job_type_suffix = self.get_job_type_suffix(job_type);
             let output_path = self.get_output_filepath(&job_type_suffix);
             if Path::new(&output_path).exists() {
@@ -696,9 +751,6 @@ impl FileToBeProcessed {
                 );
                 continue;
             }
-            // Keep track of incomplete extraction
-            let tmp_job_type_suffix = format!("{}.__part", job_type_suffix);
-            let tmp_output_path = self.get_output_filepath(&tmp_job_type_suffix);
 
             // Lazily initialize r2p if not already done.
             let r2p = maybe_r2p.get_or_insert_with(|| {
@@ -707,49 +759,7 @@ impl FileToBeProcessed {
                 pipe
             });
 
-            match job_type {
-                ExtractionJobType::BinInfo => self.extract_binary_info(r2p, tmp_job_type_suffix),
-                ExtractionJobType::RegisterBehaviour => {
-                    self.extract_register_behaviour(r2p, tmp_job_type_suffix)
-                }
-                ExtractionJobType::FunctionXrefs => {
-                    self.extract_function_xrefs(r2p, tmp_job_type_suffix)
-                }
-                ExtractionJobType::CFG => self.extract_func_cfgs(r2p, tmp_job_type_suffix),
-                ExtractionJobType::CallGraphs => {
-                    self.extract_function_call_graphs(r2p, tmp_job_type_suffix)
-                }
-                ExtractionJobType::FuncInfo => self.extract_function_info(r2p, tmp_job_type_suffix),
-                ExtractionJobType::FunctionVariables => {
-                    self.extract_function_variables(r2p, tmp_job_type_suffix)
-                }
-                ExtractionJobType::Decompilation => {
-                    self.extract_decompilation(r2p, tmp_job_type_suffix)
-                }
-                ExtractionJobType::PCodeFunc => {
-                    self.extract_pcode_function(r2p, tmp_job_type_suffix)
-                }
-                ExtractionJobType::PCodeBB => {
-                    self.extract_pcode_basic_block(r2p, tmp_job_type_suffix)
-                }
-                ExtractionJobType::LocalVariableXrefs => {
-                    self.extract_local_variable_xrefs(r2p, tmp_job_type_suffix)
-                }
-                ExtractionJobType::GlobalStrings => {
-                    self.extract_global_strings(r2p, tmp_job_type_suffix)
-                }
-                ExtractionJobType::FunctionZignatures => {
-                    self.extract_function_zignatures(r2p, tmp_job_type_suffix)
-                }
-                ExtractionJobType::FunctionBytes => {
-                    self.extract_function_bytes(r2p, tmp_job_type_suffix)
-                }
-            }
-
-            std::fs::rename(&tmp_output_path, &output_path).expect(&format!(
-                "Failed to rename temporary path {:?}",
-                tmp_output_path
-            ));
+            self.process_mode(r2p, job_type);
         }
 
         // Close the r2pipe instance once after processing all job types
