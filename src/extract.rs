@@ -393,9 +393,9 @@ pub struct FunctionZignature {
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ChecksumsEntry {
     // Output of itj
-    md5: String,
-    sha1: String,
-    sha256: String,
+    md5: Option<String>,
+    sha1: Option<String>,
+    sha256: Option<String>,
 }
 
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
