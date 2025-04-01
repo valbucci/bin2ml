@@ -389,13 +389,13 @@ pub struct FunctionZignature {
     pub hash: HashEntry,
 }
 
-// Strcuts for ij - Information about the binary file
+// Structs for ij - Information about the binary file
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ChecksumsEntry {
     // Output of itj
-    md5: Option<String>,
-    sha1: Option<String>,
-    sha256: Option<String>,
+    md5: String,
+    sha1: String,
+    sha256: String,
 }
 
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -454,13 +454,14 @@ pub struct BinEntry {
     pub stripped: bool,
     pub subsys: String,
     pub va: bool,
-    pub checksums: ChecksumsEntry, // Always empty. Populating manually with itj
+    pub checksums: HashMap<String, String>, // Always empty.
 }
 
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BinaryInfo {
     pub core: CoreEntry,
-    pub bin: BinEntry,  // Sometimes not provided. TODO: Populate only checksums
+    pub bin: Option<BinEntry>,  // Sometimes not provided within ij.
+    pub checksums: Option<ChecksumsEntry>,  // Populated manually with itj.
 }
 
 impl ExtractionJob {
@@ -803,18 +804,18 @@ impl FileToBeProcessed {
     ) -> Result<()>{
         info!("Starting binary information extraction");
         let bininfo_json = r2p.cmd("ij").with_context(|| "ij command failed to execute")?;
-        let mut bininfo: BinaryInfo = serde_json::from_str(&bininfo_json)
-            .with_context(|| format!(
-                "Unable to convert ij string to JSON object: {}", bininfo_json))?;
+        let mut bininfo: BinaryInfo = serde_json::from_str(&bininfo_json).with_context(
+            || format!("Unable to convert {:?} to JSON object!", bininfo_json
+        ))?;
 
-        let checksums_json = r2p.cmd("itj")
-            .with_context(|| "itj command failed to execute.")?;
-        let checksums: ChecksumsEntry = serde_json::from_str(&checksums_json)
-            .with_context(|| format!(
-                "Unable to convert itj string to JSON object: {}", checksums_json))?;
+        let checksums_json = r2p.cmd("itj").with_context(
+            || format!("Command itj failed in {:?}.", self.file_path
+        ))?;
+        let checksums: ChecksumsEntry = serde_json::from_str(&checksums_json).with_context(
+            || format!("Unable to convert {:?} to JSON object!", checksums_json
+        ))?;
 
-        bininfo.bin.checksums = checksums;
-
+        bininfo.checksums = Some(checksums);
         info!("Binary information extracted.");
         info!("Writing extracted data to file");
         self.write_to_json(&json!(bininfo), job_type_suffix)?;
@@ -831,8 +832,10 @@ impl FileToBeProcessed {
             HashMap::new();
         info!("Executing aeafj for each function");
         for function in function_details.iter() {
-            r2p.cmd(format!("s @ {}", &function.name).as_str())
-                .expect("Command failed..");
+            let seek_cmd = format!("s @ {}", &function.name);
+            r2p.cmd(seek_cmd.as_str()).with_context(|| format!(
+                "Command {:?} failed in {:?}.", seek_cmd, self.file_path
+            ))?;
             let json = r2p.cmd("aeafj").with_context(|| format!(
                 "Command aeafj failed in {:?} at function {:?}.", 
                 self.file_path, function.name
