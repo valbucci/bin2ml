@@ -415,7 +415,7 @@ pub struct CoreEntry {
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BinEntry {
     pub arch: String,
-    pub baddr: u64,
+    pub baddr: Option<u64>,
     pub binsz: u64,
     pub bintype: String,
     pub bits: u16,
