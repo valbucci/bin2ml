@@ -436,7 +436,7 @@ pub struct BinEntry {
     pub guid: String,
     pub intrp: String,
     pub laddr: u64,
-    pub lang: String,
+    pub lang: Option<String>,
     pub linenum: bool,
     pub lsyms: bool,
     pub machine: String,
