@@ -300,7 +300,7 @@ pub struct BasicBlockMetadataEntry {
     pub outputs: u64,
     pub ninstr: u64,
     pub instrs: Vec<u64>,
-    pub traced: bool,
+    pub traced: u8, // Boolean expressed as 0 or 1
 }
 
 // Structs for axvj - Local Variable Xref JSON output
@@ -1217,23 +1217,20 @@ impl FileToBeProcessed {
         &self,
         function_addr: u64,
         r2p: &mut R2Pipe,
-    ) -> Result<BasicBlockInfo, r2pipe::Error> {
+    ) -> Result<BasicBlockInfo, anyhow::Error> {
         info!(
             "Getting the basic block information for function @ {}",
             function_addr
         );
         Self::go_to_address(r2p, function_addr);
         // Get basic block information
-        let json = r2p.cmd("afbj");
+        let json = r2p.cmd("afbj").with_context(|| format!(
+            "Command afbj failed in {:?}", self.file_path))?;
 
         // Convert returned JSON into a BasicBlockInfo struct
-        if let Ok(json_str) = json {
-            let bb_addresses: BasicBlockInfo = serde_json::from_str(json_str.as_ref())
-                .expect("Unable to convert returned object into a BasicBlockInfo struct!");
-            Ok(bb_addresses)
-        } else {
-            Err(json.unwrap_err())
-        }
+        let bb_addresses: BasicBlockInfo = serde_json::from_str(json.as_ref()).with_context(
+            || format!("Unable to convert {:?} into a BasicBlockInfo struct!", json))?;
+        Ok(bb_addresses)
     }
 
     fn get_local_variable_xref_details(
