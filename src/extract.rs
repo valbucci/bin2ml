@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use serde_aux::prelude::*;
 use serde_json;
 
-use serde_json::{json, Value};
+use serde_json::{json, Value, Deserializer};
 use std::collections::HashMap;
 use std::env;
 
@@ -1283,22 +1283,11 @@ impl FileToBeProcessed {
 
     // Helper Functions
     fn fix_json_object(&self, json_raw: &str) -> Result<serde_json::Value, serde_json::Error> {
-        let mut json_str = json_raw.replace("[]\n", ",");
-        json_str = json_str.replace("}]\n[{", "}],\n[{");
-        json_str.insert(0, '[');
-        json_str.push(']');
-        json_str = json_str.replace("}]\n,]", "}]\n]");
-        json_str = json_str.replace("\n,,[{", "\n,[{");
-        json_str = json_str.replace("\n,,[{", "\n,[{");
-
-        if json_str == "[,]" {
-            // No valid results were found, so return an empty JSON array.
-            return Ok(Value::Array(vec![]));
-        }
-
-        // Attempt to parse the JSON. Any parsing error will be returned.
-        let json: Value = serde_json::from_str(&json_str)?;
-        Ok(json)
+        // Collect all JSON objects into a vector.
+        let stream = Deserializer::from_str(json_raw).into_iter::<Value>();
+        let json_objects: Result<Vec<Value>, _> = stream.collect();
+        // Map the collected vector into a JSON array.
+        json_objects.map(Value::Array)
     }
 
     fn sanitize_function_name(&self, original: &str) -> String {
