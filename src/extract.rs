@@ -300,7 +300,7 @@ pub struct BasicBlockMetadataEntry {
     pub outputs: u64,
     pub ninstr: u64,
     pub instrs: Vec<u64>,
-    pub traced: u8, // Boolean expressed as 0 or 1
+    pub traced: bool,
 }
 
 // Structs for axvj - Local Variable Xref JSON output
@@ -1227,9 +1227,26 @@ impl FileToBeProcessed {
         let json = r2p.cmd("afbj").with_context(|| format!(
             "Command afbj failed in {:?}", self.file_path))?;
 
-        // Convert returned JSON into a BasicBlockInfo struct
-        let bb_addresses: BasicBlockInfo = serde_json::from_str(json.as_ref()).with_context(
-            || format!("Unable to convert {:?} into a BasicBlockInfo struct!", json))?;
+        // Parse the JSON into a mutable serde_json::Value.
+        let mut value: serde_json::Value = serde_json::from_str(&json)
+            .with_context(|| format!("Unable to convert {:?} to JSON object!", json))?;
+
+        // Iterate over each object and convert "traced" from integer to boolean.
+        if let Some(array) = value.as_array_mut() {
+            for item in array.iter_mut() {
+                if let Some(traced_value) = item.get_mut("traced") {
+                    // If traced is a number, convert it to a bool.
+                    if let Some(num) = traced_value.as_i64() {
+                        *traced_value = serde_json::Value::Bool(num != 0);
+                    }
+                }
+            }
+        }
+
+        // Deserialize JSON into a BasicBlockInfo struct
+        let bb_addresses: BasicBlockInfo = serde_json::from_value(value.clone())
+            .with_context(|| format!(
+                "Unable to convert {:?} into a BasicBlockInfo struct!", value))?;
         Ok(bb_addresses)
     }
 
