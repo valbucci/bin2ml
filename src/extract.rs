@@ -1181,21 +1181,23 @@ impl FileToBeProcessed {
         &self,
         function_addr: u64,
         r2p: &mut R2Pipe,
-    ) -> Result<DecompJSON, r2pipe::Error> {
+    ) -> Result<DecompJSON, anyhow::Error> {
         Self::go_to_address(r2p, function_addr);
         let json = r2p.cmd("pdgj")?;
 
         if self.with_annotations {
-            let json_obj: DecompJSON =
-                serde_json::from_str(&json).expect("Unable to convert to JSON object!");
+            let json_obj: DecompJSON = serde_json::from_str(&json).with_context(
+                || format!("Unable to convert {:?} to JSON object!", json))?;
             Ok(json_obj)
         } else {
-            let json_obj: Value =
-                serde_json::from_str(&json).expect("Unable to convert to JSON object!");
-            Ok(DecompJSON {
-                code: json_obj["code"].as_str().unwrap().to_string(),
+            let json_obj: Value = serde_json::from_str(&json).with_context(
+                || format!("Unable to convert {:?} to JSON object!", json))?;
+            let parsed_code = json_obj["code"].as_str().unwrap().to_string();
+            let parsed_obj = DecompJSON {
+                code: parsed_code,
                 annotations: Vec::new(),
-            })
+            };
+            Ok(parsed_obj)
         }
     }
 
