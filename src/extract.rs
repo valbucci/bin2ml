@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use serde_aux::prelude::*;
 use serde_json;
 
-use serde_json::{json, Value};
+use serde_json::{json, Value, Deserializer};
 use std::collections::HashMap;
 use std::env;
 
@@ -389,7 +389,7 @@ pub struct FunctionZignature {
     pub hash: HashEntry,
 }
 
-// Strcuts for ij - Information about the binary file
+// Structs for ij - Information about the binary file
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ChecksumsEntry {
     // Output of itj
@@ -415,7 +415,7 @@ pub struct CoreEntry {
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BinEntry {
     pub arch: String,
-    pub baddr: u64,
+    pub baddr: Option<u64>,
     pub binsz: u64,
     pub bintype: String,
     pub bits: u16,
@@ -436,7 +436,7 @@ pub struct BinEntry {
     pub guid: String,
     pub intrp: String,
     pub laddr: u64,
-    pub lang: String,
+    pub lang: Option<String>,
     pub linenum: bool,
     pub lsyms: bool,
     pub machine: String,
@@ -454,13 +454,14 @@ pub struct BinEntry {
     pub stripped: bool,
     pub subsys: String,
     pub va: bool,
-    pub checksums: ChecksumsEntry, // Always empty. Populating manually with itj
+    pub checksums: HashMap<String, String>, // Always empty.
 }
 
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BinaryInfo {
     pub core: CoreEntry,
-    pub bin: BinEntry,  // Sometimes not provided. TODO: Populate only checksums
+    pub bin: Option<BinEntry>,  // Sometimes not provided within ij.
+    pub checksums: Option<ChecksumsEntry>,  // Populated manually with itj.
 }
 
 impl ExtractionJob {
@@ -803,18 +804,18 @@ impl FileToBeProcessed {
     ) -> Result<()>{
         info!("Starting binary information extraction");
         let bininfo_json = r2p.cmd("ij").with_context(|| "ij command failed to execute")?;
-        let mut bininfo: BinaryInfo = serde_json::from_str(&bininfo_json)
-            .with_context(|| format!(
-                "Unable to convert ij string to JSON object: {}", bininfo_json))?;
+        let mut bininfo: BinaryInfo = serde_json::from_str(&bininfo_json).with_context(
+            || format!("Unable to convert {:?} to JSON object!", bininfo_json
+        ))?;
 
-        let checksums_json = r2p.cmd("itj")
-            .with_context(|| "itj command failed to execute.")?;
-        let checksums: ChecksumsEntry = serde_json::from_str(&checksums_json)
-            .with_context(|| format!(
-                "Unable to convert itj string to JSON object: {}", checksums_json))?;
+        let checksums_json = r2p.cmd("itj").with_context(
+            || format!("Command itj failed in {:?}.", self.file_path
+        ))?;
+        let checksums: ChecksumsEntry = serde_json::from_str(&checksums_json).with_context(
+            || format!("Unable to convert {:?} to JSON object!", checksums_json
+        ))?;
 
-        bininfo.bin.checksums = checksums;
-
+        bininfo.checksums = Some(checksums);
         info!("Binary information extracted.");
         info!("Writing extracted data to file");
         self.write_to_json(&json!(bininfo), job_type_suffix)?;
@@ -831,8 +832,10 @@ impl FileToBeProcessed {
             HashMap::new();
         info!("Executing aeafj for each function");
         for function in function_details.iter() {
-            r2p.cmd(format!("s @ {}", &function.name).as_str())
-                .expect("Command failed..");
+            let seek_cmd = format!("s @ {}", &function.name);
+            r2p.cmd(seek_cmd.as_str()).with_context(|| format!(
+                "Command {:?} failed in {:?}.", seek_cmd, self.file_path
+            ))?;
             let json = r2p.cmd("aeafj").with_context(|| format!(
                 "Command aeafj failed in {:?} at function {:?}.", 
                 self.file_path, function.name
@@ -1280,22 +1283,11 @@ impl FileToBeProcessed {
 
     // Helper Functions
     fn fix_json_object(&self, json_raw: &str) -> Result<serde_json::Value, serde_json::Error> {
-        let mut json_str = json_raw.replace("[]\n", ",");
-        json_str = json_str.replace("}]\n[{", "}],\n[{");
-        json_str.insert(0, '[');
-        json_str.push(']');
-        json_str = json_str.replace("}]\n,]", "}]\n]");
-        json_str = json_str.replace("\n,,[{", "\n,[{");
-        json_str = json_str.replace("\n,,[{", "\n,[{");
-
-        if json_str == "[,]" {
-            // No valid results were found, so return an empty JSON array.
-            return Ok(Value::Array(vec![]));
-        }
-
-        // Attempt to parse the JSON. Any parsing error will be returned.
-        let json: Value = serde_json::from_str(&json_str)?;
-        Ok(json)
+        // Collect all JSON objects into a vector.
+        let stream = Deserializer::from_str(json_raw).into_iter::<Value>();
+        let json_objects: Result<Vec<Value>, _> = stream.collect();
+        // Map the collected vector into a JSON array.
+        json_objects.map(Value::Array)
     }
 
     fn sanitize_function_name(&self, original: &str) -> String {
