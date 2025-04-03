@@ -1217,23 +1217,37 @@ impl FileToBeProcessed {
         &self,
         function_addr: u64,
         r2p: &mut R2Pipe,
-    ) -> Result<BasicBlockInfo, r2pipe::Error> {
+    ) -> Result<BasicBlockInfo, anyhow::Error> {
         info!(
             "Getting the basic block information for function @ {}",
             function_addr
         );
         Self::go_to_address(r2p, function_addr);
         // Get basic block information
-        let json = r2p.cmd("afbj");
+        let json = r2p.cmd("afbj").with_context(|| format!(
+            "Command afbj failed in {:?}", self.file_path))?;
 
-        // Convert returned JSON into a BasicBlockInfo struct
-        if let Ok(json_str) = json {
-            let bb_addresses: BasicBlockInfo = serde_json::from_str(json_str.as_ref())
-                .expect("Unable to convert returned object into a BasicBlockInfo struct!");
-            Ok(bb_addresses)
-        } else {
-            Err(json.unwrap_err())
+        // Parse the JSON into a mutable serde_json::Value.
+        let mut value: serde_json::Value = serde_json::from_str(&json)
+            .with_context(|| format!("Unable to convert {:?} to JSON object!", json))?;
+
+        // Iterate over each object and convert "traced" from integer to boolean.
+        if let Some(array) = value.as_array_mut() {
+            for item in array.iter_mut() {
+                if let Some(traced_value) = item.get_mut("traced") {
+                    // If traced is a number, convert it to a bool.
+                    if let Some(num) = traced_value.as_i64() {
+                        *traced_value = serde_json::Value::Bool(num != 0);
+                    }
+                }
+            }
         }
+
+        // Deserialize JSON into a BasicBlockInfo struct
+        let bb_addresses: BasicBlockInfo = serde_json::from_value(value.clone())
+            .with_context(|| format!(
+                "Unable to convert {:?} into a BasicBlockInfo struct!", value))?;
+        Ok(bb_addresses)
     }
 
     fn get_local_variable_xref_details(
