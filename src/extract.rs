@@ -948,7 +948,8 @@ impl FileToBeProcessed {
         let mut function_xrefs: HashMap<String, Vec<FunctionXrefDetails>> = HashMap::new();
         info!("Extracting xrefs for each function");
         for function in function_details.iter() {
-            let ret = self.get_function_xref_details(function.offset, r2p);
+            let ret = self.get_function_xref_details(function.offset, r2p).with_context(
+                || format!("Unable to get function xrefs from {:?}", self.file_path))?;
             function_xrefs.insert(function.name.clone(), ret);
         }
         info!("All functions processed");
@@ -1258,12 +1259,13 @@ impl FileToBeProcessed {
         &self,
         function_addr: u64,
         r2p: &mut R2Pipe,
-    ) -> Vec<FunctionXrefDetails> {
+    ) -> Result<Vec<FunctionXrefDetails>, anyhow::Error> {
         info!("Getting function xref details");
         Self::go_to_address(r2p, function_addr);
-        let json = r2p.cmd("axffj").expect("axffj command failed");
-        let mut json_obj: Vec<FunctionXrefDetails> =
-            serde_json::from_str(&json).expect("Unable to convert to JSON object!");
+        let json = r2p.cmd("axffj").with_context(|| format!(
+            "Command axffj failed in {:?}", self.file_path))?;
+        let mut json_obj: Vec<FunctionXrefDetails> = serde_json::from_str(&json)
+            .with_context(|| format!("Unable to convert {:?} to JSON object!", json))?;
         debug!("Replacing all CALL xrefs with actual function name");
         // TODO: There is a minor bug in this where functions without any xrefs are included.
         // Been left in as may be useful later down the line.
@@ -1271,14 +1273,14 @@ impl FileToBeProcessed {
             debug!("Replacing all CALL xrefs with actual function name");
             for element in json_obj.iter_mut() {
                 if element.type_field == "CALL" {
-                    let function_name = r2p
-                        .cmd(format!("afi. @ {}", &element.ref_field).as_str())
-                        .expect("afi. command failed");
-                    element.name = function_name;
+                    let cmd_str = format!("afi. @ {}", &element.ref_field);
+                    let function_name = r2p.cmd(cmd_str.as_str()).with_context(|| format!(
+                        "Command {:?} failed in {:?}", cmd_str, self.file_path))?;
+                    element.name = function_name.trim().to_string();
                 }
             }
         };
-        json_obj
+        Ok(json_obj)
     }
 
     // Helper Functions
