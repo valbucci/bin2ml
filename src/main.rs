@@ -451,9 +451,9 @@ fn main() {
                 };
 
                 let path_str = path.to_string_lossy();
-                let is_path_pattern = path_str.contains('*') || path_str.contains('?') || path_str.contains('[');
-                if !path.exists() && !is_path_pattern
-                {
+                let is_path_pattern =
+                    path_str.contains('*') || path_str.contains('?') || path_str.contains('[');
+                if !path.exists() && !is_path_pattern {
                     error!("{:?} does not exist!", path);
                     exit(1)
                 }
@@ -491,8 +491,7 @@ fn main() {
                                 feature_vec_type
                             );
 
-                            if is_path_pattern
-                            {
+                            if is_path_pattern {
                                 info!("Matching pattern found. Will parallel process.");
                                 for entry in glob(&path_str)
                                     .expect("Failed to read glob pattern")

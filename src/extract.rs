@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use serde_aux::prelude::*;
 use serde_json;
 
-use serde_json::{json, Value, Deserializer};
+use serde_json::{json, Deserializer, Value};
 use std::collections::HashMap;
 use std::env;
 
@@ -460,8 +460,8 @@ pub struct BinEntry {
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BinaryInfo {
     pub core: CoreEntry,
-    pub bin: Option<BinEntry>,  // Sometimes not provided within ij.
-    pub checksums: Option<ChecksumsEntry>,  // Populated manually with itj.
+    pub bin: Option<BinEntry>, // Sometimes not provided within ij.
+    pub checksums: Option<ChecksumsEntry>, // Populated manually with itj.
 }
 
 impl ExtractionJob {
@@ -668,11 +668,7 @@ impl FileToBeProcessed {
         output_filepath.clone()
     }
 
-    pub fn process_mode(
-        &self, 
-        r2p: &mut R2Pipe, 
-        job_type: &ExtractionJobType
-    ) -> Result<()>{
+    pub fn process_mode(&self, r2p: &mut R2Pipe, job_type: &ExtractionJobType) -> Result<()> {
         let job_type_suffix = self.get_job_type_suffix(job_type);
         // Use temporary name to keep track of incomplete extraction
         let tmp_job_type_suffix = format!("{}.__part", job_type_suffix).to_string();
@@ -697,12 +693,8 @@ impl FileToBeProcessed {
             ExtractionJobType::Decompilation => {
                 self.extract_decompilation(r2p, tmp_job_type_suffix)
             }
-            ExtractionJobType::PCodeFunc => {
-                self.extract_pcode_function(r2p, tmp_job_type_suffix)
-            }
-            ExtractionJobType::PCodeBB => {
-                self.extract_pcode_basic_block(r2p, tmp_job_type_suffix)
-            }
+            ExtractionJobType::PCodeFunc => self.extract_pcode_function(r2p, tmp_job_type_suffix),
+            ExtractionJobType::PCodeBB => self.extract_pcode_basic_block(r2p, tmp_job_type_suffix),
             ExtractionJobType::LocalVariableXrefs => {
                 self.extract_local_variable_xrefs(r2p, tmp_job_type_suffix)
             }
@@ -719,8 +711,13 @@ impl FileToBeProcessed {
 
         // Apply final output file name when extraction is done
         let output_path = self.get_output_filepath(&job_type_suffix);
-        std::fs::rename(&tmp_output_path, &output_path).map_err(|e| anyhow::anyhow!(
-            "Failed to rename temporary path {:?}: {}", tmp_output_path, e))?;
+        std::fs::rename(&tmp_output_path, &output_path).map_err(|e| {
+            anyhow::anyhow!(
+                "Failed to rename temporary path {:?}: {}",
+                tmp_output_path,
+                e
+            )
+        })?;
         Ok(())
     }
 
@@ -763,10 +760,14 @@ impl FileToBeProcessed {
             });
 
             match self.process_mode(r2p, job_type) {
-                Ok(_) => debug!("Finished {:?} extraction job for {:?}: processed at {:?}.",
-                    job_type_suffix, self.file_path, output_path),
-                Err(e) => error!("Aborted {:?} extraction job for {:?} due to error: {:?}.",
-                    job_type_suffix, self.file_path, e),
+                Ok(_) => debug!(
+                    "Finished {:?} extraction job for {:?}: processed at {:?}.",
+                    job_type_suffix, self.file_path, output_path
+                ),
+                Err(e) => error!(
+                    "Aborted {:?} extraction job for {:?} due to error: {:?}.",
+                    job_type_suffix, self.file_path, e
+                ),
             }
         }
 
@@ -797,23 +798,19 @@ impl FileToBeProcessed {
         .to_string()
     }
 
-    pub fn extract_binary_info(
-        &self, 
-        r2p: &mut R2Pipe, 
-        job_type_suffix: String
-    ) -> Result<()>{
+    pub fn extract_binary_info(&self, r2p: &mut R2Pipe, job_type_suffix: String) -> Result<()> {
         info!("Starting binary information extraction");
-        let bininfo_json = r2p.cmd("ij").with_context(|| "ij command failed to execute")?;
-        let mut bininfo: BinaryInfo = serde_json::from_str(&bininfo_json).with_context(
-            || format!("Unable to convert {:?} to JSON object!", bininfo_json
-        ))?;
+        let bininfo_json = r2p
+            .cmd("ij")
+            .with_context(|| "ij command failed to execute")?;
+        let mut bininfo: BinaryInfo = serde_json::from_str(&bininfo_json)
+            .with_context(|| format!("Unable to convert {:?} to JSON object!", bininfo_json))?;
 
-        let checksums_json = r2p.cmd("itj").with_context(
-            || format!("Command itj failed in {:?}.", self.file_path
-        ))?;
-        let checksums: ChecksumsEntry = serde_json::from_str(&checksums_json).with_context(
-            || format!("Unable to convert {:?} to JSON object!", checksums_json
-        ))?;
+        let checksums_json = r2p
+            .cmd("itj")
+            .with_context(|| format!("Command itj failed in {:?}.", self.file_path))?;
+        let checksums: ChecksumsEntry = serde_json::from_str(&checksums_json)
+            .with_context(|| format!("Unable to convert {:?} to JSON object!", checksums_json))?;
 
         bininfo.checksums = Some(checksums);
         info!("Binary information extracted.");
@@ -825,21 +822,22 @@ impl FileToBeProcessed {
     pub fn extract_register_behaviour(
         &self,
         r2p: &mut R2Pipe,
-        job_type_suffix: String
+        job_type_suffix: String,
     ) -> Result<()> {
         let function_details = self.get_function_name_list(r2p)?;
-        let mut register_behaviour_vec: HashMap<String, AEAFJRegisterBehaviour> =
-            HashMap::new();
+        let mut register_behaviour_vec: HashMap<String, AEAFJRegisterBehaviour> = HashMap::new();
         info!("Executing aeafj for each function");
         for function in function_details.iter() {
             let seek_cmd = format!("s @ {}", &function.name);
-            r2p.cmd(seek_cmd.as_str()).with_context(|| format!(
-                "Command {:?} failed in {:?}.", seek_cmd, self.file_path
-            ))?;
-            let json = r2p.cmd("aeafj").with_context(|| format!(
-                "Command aeafj failed in {:?} at function {:?}.", 
-                self.file_path, function.name
-            ))?;
+            r2p.cmd(seek_cmd.as_str()).with_context(|| {
+                format!("Command {:?} failed in {:?}.", seek_cmd, self.file_path)
+            })?;
+            let json = r2p.cmd("aeafj").with_context(|| {
+                format!(
+                    "Command aeafj failed in {:?} at function {:?}.",
+                    self.file_path, function.name
+                )
+            })?;
             let json_obj: AEAFJRegisterBehaviour = serde_json::from_str(&json)
                 .with_context(|| format!("Unable to convert {:?} to JSON object!", json))?;
             register_behaviour_vec.insert(function.name.clone(), json_obj);
@@ -851,13 +849,14 @@ impl FileToBeProcessed {
     }
 
     pub fn extract_function_call_graphs(
-        &self, 
-        r2p: &mut R2Pipe, 
-        job_type_suffix: String
+        &self,
+        r2p: &mut R2Pipe,
+        job_type_suffix: String,
     ) -> Result<()> {
         info!("Starting function call graph extraction");
-        let json = r2p.cmd("agCj").with_context(|| format!(
-            "agCj command failed to execute on {:?}", self.file_path))?;
+        let json = r2p
+            .cmd("agCj")
+            .with_context(|| format!("agCj command failed to execute on {:?}", self.file_path))?;
         let function_call_graphs: Vec<AGCJFunctionCallGraph> = serde_json::from_str(&json)
             .with_context(|| format!("Unable to convert {:?} to JSON object!", json))?;
         info!("Function call graph extracted.");
@@ -866,11 +865,7 @@ impl FileToBeProcessed {
         Ok(())
     }
 
-    pub fn extract_function_info(
-        &self,
-        r2p: &mut R2Pipe,
-        job_type_suffix: String
-    ) -> Result<()> {
+    pub fn extract_function_info(&self, r2p: &mut R2Pipe, job_type_suffix: String) -> Result<()> {
         info!("Starting function metdata extraction");
         let function_details: Vec<AFIJFunctionInfo> = self.get_function_name_list(r2p)?;
 
@@ -882,21 +877,25 @@ impl FileToBeProcessed {
     }
 
     pub fn extract_function_variables(
-        &self, 
-        r2p: &mut R2Pipe, 
-        job_type_suffix: String
+        &self,
+        r2p: &mut R2Pipe,
+        job_type_suffix: String,
     ) -> Result<()> {
         info!("Starting function variables extraction");
         let function_details = self.get_function_name_list(r2p)?;
         let mut func_variables_vec: HashMap<String, AFVJFuncDetails> = HashMap::new();
         info!("Executing aeafj for each function");
         for function in function_details.iter() {
-            let json = r2p.cmd(format!("afvj @ {}", &function.name).as_str())
-                .with_context(|| format!("Command afvj failed in {:?} at function {:?}.",
-                    self.file_path, function.name))?;
+            let json = r2p
+                .cmd(format!("afvj @ {}", &function.name).as_str())
+                .with_context(|| {
+                    format!(
+                        "Command afvj failed in {:?} at function {:?}.",
+                        self.file_path, function.name
+                    )
+                })?;
             let json_obj: AFVJFuncDetails = serde_json::from_str(&json)
-                .with_context(|| format!(
-                    "Unable to convert {:?} to JSON object!", json))?;
+                .with_context(|| format!("Unable to convert {:?} to JSON object!", json))?;
             func_variables_vec.insert(function.name.clone(), json_obj);
         }
         info!("All functions processed");
@@ -905,15 +904,15 @@ impl FileToBeProcessed {
         Ok(())
     }
 
-    pub fn extract_func_cfgs(
-        &self,
-        r2p: &mut R2Pipe,
-        job_type_suffix: String
-    ) -> Result<()> {
+    pub fn extract_func_cfgs(&self, r2p: &mut R2Pipe, job_type_suffix: String) -> Result<()> {
         info!("Executing agfj @@f on {:?}", self.file_path);
 
-        let json_raw = r2p.cmd("agfj @@f").with_context(|| format!(
-            "Failed to extract control flow graph information from {:?}.", self.file_path))?;
+        let json_raw = r2p.cmd("agfj @@f").with_context(|| {
+            format!(
+                "Failed to extract control flow graph information from {:?}.",
+                self.file_path
+            )
+        })?;
 
         info!("Starting JSON fixup for {:?}", self.file_path);
         match self.fix_json_object(&json_raw) {
@@ -931,25 +930,26 @@ impl FileToBeProcessed {
             }
             Err(e) => {
                 return Err(anyhow::anyhow!(
-                    "Unable to parse json for {:?}: {}: {}", 
-                    self.file_path, json_raw, e
+                    "Unable to parse json for {:?}: {}: {}",
+                    self.file_path,
+                    json_raw,
+                    e
                 ));
             }
         }
         Ok(())
     }
 
-    pub fn extract_function_xrefs(
-        &self,
-        r2p: &mut R2Pipe,
-        job_type_suffix: String
-    ) -> Result<()> {
+    pub fn extract_function_xrefs(&self, r2p: &mut R2Pipe, job_type_suffix: String) -> Result<()> {
         let function_details = self.get_function_name_list(r2p)?;
         let mut function_xrefs: HashMap<String, Vec<FunctionXrefDetails>> = HashMap::new();
         info!("Extracting xrefs for each function");
         for function in function_details.iter() {
-            let ret = self.get_function_xref_details(function.offset, r2p).with_context(
-                || format!("Unable to get function xrefs from {:?}", self.file_path))?;
+            let ret = self
+                .get_function_xref_details(function.offset, r2p)
+                .with_context(|| {
+                    format!("Unable to get function xrefs from {:?}", self.file_path)
+                })?;
             function_xrefs.insert(function.name.clone(), ret);
         }
         info!("All functions processed");
@@ -958,11 +958,7 @@ impl FileToBeProcessed {
         Ok(())
     }
 
-    pub fn extract_decompilation(
-        &self,
-        r2p: &mut R2Pipe,
-        job_type_suffix: String
-    ) -> Result<()> {
+    pub fn extract_decompilation(&self, r2p: &mut R2Pipe, job_type_suffix: String) -> Result<()> {
         info!("Starting decompilation extraction!");
         let function_details = self.get_function_name_list(r2p)?;
         let mut function_decomp: HashMap<String, DecompJSON> = HashMap::new();
@@ -978,11 +974,7 @@ impl FileToBeProcessed {
         Ok(())
     }
 
-    pub fn extract_pcode_function(
-        &self,
-        r2p: &mut R2Pipe,
-        job_type_suffix: String
-    ) -> Result<()> {
+    pub fn extract_pcode_function(&self, r2p: &mut R2Pipe, job_type_suffix: String) -> Result<()> {
         info!("Starting pcode extraction at a function level");
         let function_details = self.get_function_name_list(r2p)?;
         let mut function_pcode = Vec::new();
@@ -1006,24 +998,35 @@ impl FileToBeProcessed {
     pub fn extract_pcode_basic_block(
         &self,
         r2p: &mut R2Pipe,
-        job_type_suffix: String
+        job_type_suffix: String,
     ) -> Result<()> {
         info!("Starting pcode extraction for each basic block in each function within the binary");
         let function_details = self.get_function_name_list(r2p)?;
         let mut function_pcode = Vec::new();
 
         for function in function_details.iter() {
-            let bb_addresses = self.get_basic_block_addresses(function.offset, r2p)
-                .with_context(|| format!(
-                    "Unable to get basic block addresses in {:?} at offset {:?}", 
-                    self.file_path, function.offset))?;
+            let bb_addresses = self
+                .get_basic_block_addresses(function.offset, r2p)
+                .with_context(|| {
+                    format!(
+                        "Unable to get basic block addresses in {:?} at offset {:?}",
+                        self.file_path, function.offset
+                    )
+                })?;
             let mut bb_pcode: Vec<PCodeJsonWithBB> = Vec::new();
             for bb in bb_addresses.iter() {
-                let ret = self.get_ghidra_pcode_function(
-                    bb.addr, bb.ninstr.try_into().unwrap(), // Convert u64 to i64
-                    r2p).with_context(|| format!(
-                        "Basic block decompilation failed in {:?} at offset {:?}",
-                        self.file_path, bb.addr))?;
+                let ret = self
+                    .get_ghidra_pcode_function(
+                        bb.addr,
+                        bb.ninstr.try_into().unwrap(), // Convert u64 to i64
+                        r2p,
+                    )
+                    .with_context(|| {
+                        format!(
+                            "Basic block decompilation failed in {:?} at offset {:?}",
+                            self.file_path, bb.addr
+                        )
+                    })?;
                 let pcode_json = PCodeJsonWithBB {
                     block_start_adr: bb.addr,
                     pcode: ret.pcode,
@@ -1047,7 +1050,7 @@ impl FileToBeProcessed {
     pub fn extract_local_variable_xrefs(
         &self,
         r2p: &mut R2Pipe,
-        job_type_suffix: String
+        job_type_suffix: String,
     ) -> Result<()> {
         info!("Starting local variable xref extraction");
         let function_details = self.get_function_name_list(r2p)?;
@@ -1064,18 +1067,15 @@ impl FileToBeProcessed {
         Ok(())
     }
 
-    pub fn extract_global_strings(
-        &self,
-        r2p: &mut R2Pipe,
-        job_type_suffix: String
-    ) -> Result<()> {
+    pub fn extract_global_strings(&self, r2p: &mut R2Pipe, job_type_suffix: String) -> Result<()> {
         info!("Starting Global String Extraction");
-        let json = r2p.cmd("izj").with_context(
-            || format!("Command izj failed in {:?}.", self.file_path))?;
+        let json = r2p
+            .cmd("izj")
+            .with_context(|| format!("Command izj failed in {:?}.", self.file_path))?;
 
         debug!("{}", json);
-        let json_obj: Vec<StringEntry> = serde_json::from_str(&json).with_context(
-            || format!("Unable to convert {:?} to JSON object!", json))?;
+        let json_obj: Vec<StringEntry> = serde_json::from_str(&json)
+            .with_context(|| format!("Unable to convert {:?} to JSON object!", json))?;
 
         self.write_to_json(&json!(json_obj), job_type_suffix)?;
         Ok(())
@@ -1084,14 +1084,16 @@ impl FileToBeProcessed {
     pub fn extract_function_zignatures(
         &self,
         r2p: &mut R2Pipe,
-        job_type_suffix: String
+        job_type_suffix: String,
     ) -> Result<()> {
         info!("Starting function zignatures extraction");
-        let _ = r2p.cmd("zg").with_context(|| format!(
-            "Command zg failed in {:?}.", self.file_path))?; // generate zignatures
+        let _ = r2p
+            .cmd("zg")
+            .with_context(|| format!("Command zg failed in {:?}.", self.file_path))?; // generate zignatures
         debug!("Finished generating function zignatures");
-        let json = r2p.cmd("zj").with_context(|| format!(
-            "Command zj failed in {:?}.", self.file_path))?;
+        let json = r2p
+            .cmd("zj")
+            .with_context(|| format!("Command zj failed in {:?}.", self.file_path))?;
         let function_zignatures: Vec<FunctionZignature> = serde_json::from_str(&json)
             .with_context(|| format!("Unable to convert {:?} to JSON object!", json))?;
         info!("Function zignatures extracted.");
@@ -1100,22 +1102,23 @@ impl FileToBeProcessed {
         Ok(())
     }
 
-    pub fn extract_function_bytes(
-        &self,
-        r2p: &mut R2Pipe,
-        job_type_suffix: String
-    ) -> Result<()> {
+    pub fn extract_function_bytes(&self, r2p: &mut R2Pipe, job_type_suffix: String) -> Result<()> {
         info!("Starting function bytes extraction");
         let function_details = self.get_function_name_list(r2p)?;
 
         for function in function_details.iter() {
-            debug!("Function Name: {} Offset: {} Size: {}", 
-                function.name, function.offset, function.size);
-            let function_bytes = self.get_bytes_function(
-                function.offset, function.size, r2p).with_context(|| format!(
-                    "Bytes extraction failed in {:?} at function {:?}.", 
-                    self.file_path, function.name
-                ))?;
+            debug!(
+                "Function Name: {} Offset: {} Size: {}",
+                function.name, function.offset, function.size
+            );
+            let function_bytes = self
+                .get_bytes_function(function.offset, function.size, r2p)
+                .with_context(|| {
+                    format!(
+                        "Bytes extraction failed in {:?} at function {:?}.",
+                        self.file_path, function.name
+                    )
+                })?;
             Self::write_to_bin(
                 self,
                 &function.name,
@@ -1186,12 +1189,12 @@ impl FileToBeProcessed {
         let json = r2p.cmd("pdgj")?;
 
         if self.with_annotations {
-            let json_obj: DecompJSON = serde_json::from_str(&json).with_context(
-                || format!("Unable to convert {:?} to JSON object!", json))?;
+            let json_obj: DecompJSON = serde_json::from_str(&json)
+                .with_context(|| format!("Unable to convert {:?} to JSON object!", json))?;
             Ok(json_obj)
         } else {
-            let json_obj: Value = serde_json::from_str(&json).with_context(
-                || format!("Unable to convert {:?} to JSON object!", json))?;
+            let json_obj: Value = serde_json::from_str(&json)
+                .with_context(|| format!("Unable to convert {:?} to JSON object!", json))?;
             let parsed_code = json_obj["code"].as_str().unwrap().to_string();
             let parsed_obj = DecompJSON {
                 code: parsed_code,
@@ -1206,12 +1209,12 @@ impl FileToBeProcessed {
         r2p: &mut R2Pipe,
     ) -> Result<Vec<AFIJFunctionInfo>, anyhow::Error> {
         info!("Getting function information from binary");
-        let json = r2p.cmd("aflj").with_context(|| format!(
-            "Failed executing aflj on {:?}", self.file_path))?;
-        
-        let json_obj: Vec<AFIJFunctionInfo> = serde_json::from_str(
-            json.as_ref()).with_context(|| format!(
-                "Unable to convert {:?} to JSON object!", json))?;
+        let json = r2p
+            .cmd("aflj")
+            .with_context(|| format!("Failed executing aflj on {:?}", self.file_path))?;
+
+        let json_obj: Vec<AFIJFunctionInfo> = serde_json::from_str(json.as_ref())
+            .with_context(|| format!("Unable to convert {:?} to JSON object!", json))?;
         Ok(json_obj)
     }
 
@@ -1226,8 +1229,9 @@ impl FileToBeProcessed {
         );
         Self::go_to_address(r2p, function_addr);
         // Get basic block information
-        let json = r2p.cmd("afbj").with_context(|| format!(
-            "Command afbj failed in {:?}", self.file_path))?;
+        let json = r2p
+            .cmd("afbj")
+            .with_context(|| format!("Command afbj failed in {:?}", self.file_path))?;
 
         // Parse the JSON into a mutable serde_json::Value.
         let mut value: serde_json::Value = serde_json::from_str(&json)
@@ -1246,9 +1250,13 @@ impl FileToBeProcessed {
         }
 
         // Deserialize JSON into a BasicBlockInfo struct
-        let bb_addresses: BasicBlockInfo = serde_json::from_value(value.clone())
-            .with_context(|| format!(
-                "Unable to convert {:?} into a BasicBlockInfo struct!", value))?;
+        let bb_addresses: BasicBlockInfo =
+            serde_json::from_value(value.clone()).with_context(|| {
+                format!(
+                    "Unable to convert {:?} into a BasicBlockInfo struct!",
+                    value
+                )
+            })?;
         Ok(bb_addresses)
     }
 
@@ -1278,8 +1286,9 @@ impl FileToBeProcessed {
     ) -> Result<Vec<FunctionXrefDetails>, anyhow::Error> {
         info!("Getting function xref details");
         Self::go_to_address(r2p, function_addr);
-        let json = r2p.cmd("axffj").with_context(|| format!(
-            "Command axffj failed in {:?}", self.file_path))?;
+        let json = r2p
+            .cmd("axffj")
+            .with_context(|| format!("Command axffj failed in {:?}", self.file_path))?;
         let mut json_obj: Vec<FunctionXrefDetails> = serde_json::from_str(&json)
             .with_context(|| format!("Unable to convert {:?} to JSON object!", json))?;
         debug!("Replacing all CALL xrefs with actual function name");
@@ -1290,8 +1299,9 @@ impl FileToBeProcessed {
             for element in json_obj.iter_mut() {
                 if element.type_field == "CALL" {
                     let cmd_str = format!("afi. @ {}", &element.ref_field);
-                    let function_name = r2p.cmd(cmd_str.as_str()).with_context(|| format!(
-                        "Command {:?} failed in {:?}", cmd_str, self.file_path))?;
+                    let function_name = r2p.cmd(cmd_str.as_str()).with_context(|| {
+                        format!("Command {:?} failed in {:?}", cmd_str, self.file_path)
+                    })?;
                     element.name = function_name.trim().to_string();
                 }
             }
@@ -1304,13 +1314,13 @@ impl FileToBeProcessed {
         // Collect all JSON objects into a vector.
         let stream = Deserializer::from_str(json_raw).into_iter::<Value>();
         let json_objects: Result<Vec<Value>, _> = stream
-        .filter_map(|result| {
-            match result {
-                Ok(Value::Array(ref arr)) if arr.is_empty() => None, // skip empty arrays
-                other => Some(other),
-            }
-        })
-        .collect();
+            .filter_map(|result| {
+                match result {
+                    Ok(Value::Array(ref arr)) if arr.is_empty() => None, // skip empty arrays
+                    other => Some(other),
+                }
+            })
+            .collect();
         // Map the collected vector into a JSON array.
         json_objects.map(Value::Array)
     }
@@ -1323,12 +1333,13 @@ impl FileToBeProcessed {
     }
 
     fn get_file_name(&self) -> Result<String> {
-        self.file_path.file_name()
+        self.file_path
+            .file_name()
             .ok_or_else(|| anyhow!("Unable to get file name from {:?}", self.file_path))
             .map(|os_str| os_str.to_string_lossy().to_string())
     }
 
-    fn write_to_json(&self, json_obj: &Value, job_type_suffix: String) -> Result<()>{
+    fn write_to_json(&self, json_obj: &Value, job_type_suffix: String) -> Result<()> {
         let mut fp_filename = self.get_file_name()?;
 
         fp_filename = if self.with_annotations {
@@ -1386,7 +1397,10 @@ impl FileToBeProcessed {
             return Ok(());
         }
 
-        debug!("Attempting to write function bytes to {:?}", output_filepath);
+        debug!(
+            "Attempting to write function bytes to {:?}",
+            output_filepath
+        );
         // Write the file and attach context on error.
         fs::write(&output_filepath, func_bytes)
             .with_context(|| format!("Failed to write file {:?}", output_filepath))?;
