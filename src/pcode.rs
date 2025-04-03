@@ -335,12 +335,10 @@ impl PCodeFile {
         let write_file = File::create(fname_string).unwrap();
         let mut writer = BufWriter::new(&write_file);
 
-        for func in res {
-            let string = serde_json::to_string(&func).unwrap();
-            writer
-                .write_all(string.as_bytes())
-                .expect("Unable to write bytes.");
-        }
+        let string = serde_json::to_string(&res).unwrap();
+        writer
+            .write_all(string.as_bytes())
+            .expect("Unable to write bytes.");
     }
 
     pub fn pcode_json_with_bb_info_generate_cfg(&mut self) -> Result<(), ()> {
