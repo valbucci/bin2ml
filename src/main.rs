@@ -921,7 +921,7 @@ fn main() {
                 };
 
                 if instruction_type == InstructionMode::PCode && pcode_file_format.is_none() {
-                    error!("--pcode-file-format is required when processed PCode")
+                    error!("--pcode-file-format is required when processed PCode");
                     exit(1)
                 }
 
