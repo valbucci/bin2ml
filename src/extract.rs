@@ -1285,7 +1285,14 @@ impl FileToBeProcessed {
     fn fix_json_object(&self, json_raw: &str) -> Result<serde_json::Value, serde_json::Error> {
         // Collect all JSON objects into a vector.
         let stream = Deserializer::from_str(json_raw).into_iter::<Value>();
-        let json_objects: Result<Vec<Value>, _> = stream.collect();
+        let json_objects: Result<Vec<Value>, _> = stream
+        .filter_map(|result| {
+            match result {
+                Ok(Value::Array(ref arr)) if arr.is_empty() => None, // skip empty arrays
+                other => Some(other),
+            }
+        })
+        .collect();
         // Map the collected vector into a JSON array.
         json_objects.map(Value::Array)
     }
