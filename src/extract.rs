@@ -19,10 +19,17 @@ use serde_json::{json, Deserializer, Value};
 use std::collections::HashMap;
 use std::env;
 
+use md5;
+use sha1;
+use sha1::Digest as Sha1Digest;
+use sha2::Digest as Sha2Digest;
+use sha2::Sha256;
+
 use glob::glob;
 use regex::Regex;
 use std::fs;
 use std::fs::File;
+use std::io::{BufReader, Read};
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
@@ -392,7 +399,6 @@ pub struct FunctionZignature {
 // Structs for ij - Information about the binary file
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ChecksumsEntry {
-    // Output of itj
     md5: Option<String>,
     sha1: Option<String>,
     sha256: Option<String>,
@@ -806,14 +812,11 @@ impl FileToBeProcessed {
         let mut bininfo: BinaryInfo = serde_json::from_str(&bininfo_json)
             .with_context(|| format!("Unable to convert {:?} to JSON object!", bininfo_json))?;
 
-        let checksums_json = r2p
-            .cmd("itj")
-            .with_context(|| format!("Command itj failed in {:?}.", self.file_path))?;
-        let checksums: ChecksumsEntry = serde_json::from_str(&checksums_json)
-            .with_context(|| format!("Unable to convert {:?} to JSON object!", checksums_json))?;
-
-        bininfo.checksums = Some(checksums);
-        info!("Binary information extracted.");
+        bininfo.checksums = Some(
+            self.get_checksums()
+                .with_context(|| format!("Failed to get checksums for {:?}", self.file_path))?,
+        );
+        info!("Binary information and checksums extracted.");
         info!("Writing extracted data to file");
         self.write_to_json(&json!(bininfo), job_type_suffix)?;
         Ok(())
@@ -1129,6 +1132,52 @@ impl FileToBeProcessed {
         }
         info!("Function bytes successfully extracted");
         Ok(())
+    }
+
+    fn get_checksums(&self) -> Result<ChecksumsEntry, Error> {
+        // Open the file for reading
+        let file = File::open(&self.file_path)
+            .with_context(|| format!("Failed to open file {:?}", self.file_path))?;
+
+        // Create a buffered reader for efficient reading
+        let mut reader = BufReader::new(file);
+
+        // Initialize hashers
+        let mut md5_hasher = md5::Context::new();
+        let mut sha1_hasher = sha1::Sha1::new();
+        let mut sha256_hasher = Sha256::new();
+
+        // Use a reasonably sized buffer (64KB chunks)
+        let mut buffer = [0; 65536];
+
+        // Read the file in chunks and update all hashers
+        loop {
+            let bytes_read = reader
+                .read(&mut buffer)
+                .with_context(|| format!("Failed to read file {:?}", self.file_path))?;
+
+            if bytes_read == 0 {
+                // End of file
+                break;
+            }
+
+            // Update all hashers with this chunk
+            md5_hasher.consume(&buffer[..bytes_read]);
+            Sha1Digest::update(&mut sha1_hasher, &buffer[..bytes_read]);
+            Sha2Digest::update(&mut sha256_hasher, &buffer[..bytes_read]);
+        }
+
+        // Finalize all hashes
+        let md5_result = format!("{:x}", md5_hasher.compute());
+        let sha1_result = format!("{:x}", sha1_hasher.finalize());
+        let sha256_result = format!("{:x}", sha256_hasher.finalize());
+
+        // Return the results
+        Ok(ChecksumsEntry {
+            md5: Some(md5_result),
+            sha1: Some(sha1_result),
+            sha256: Some(sha256_result),
+        })
     }
 
     // r2 commands to structs
