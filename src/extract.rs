@@ -812,10 +812,52 @@ impl FileToBeProcessed {
         let mut bininfo: BinaryInfo = serde_json::from_str(&bininfo_json)
             .with_context(|| format!("Unable to convert {:?} to JSON object!", bininfo_json))?;
 
-        bininfo.checksums = Some(
-            self.get_checksums()
-                .with_context(|| format!("Failed to get checksums for {:?}", self.file_path))?,
-        );
+        // Attempt to get checksums from r2pipe first
+        let checksums = match r2p.cmd("itj") {
+            Ok(checksums_json) => {
+                debug!(
+                    "Successfully got checksums JSON from itj: {}",
+                    checksums_json
+                );
+                match serde_json::from_str::<ChecksumsEntry>(&checksums_json) {
+                    Ok(cs) => {
+                        // Check if all necessary checksums are present
+                        if cs.md5.is_some() && cs.sha1.is_some() && cs.sha256.is_some() {
+                            debug!("Using checksums from r2pipe (itj)");
+                            Some(cs)
+                        } else {
+                            warn!("Checksums from r2pipe (itj) are incomplete.");
+                            None
+                        }
+                    }
+                    Err(e) => {
+                        warn!("Failed to parse checksums JSON from r2pipe: {}.", e);
+                        None
+                    }
+                }
+            }
+            Err(e) => {
+                warn!("Failed to get checksums from r2pipe (itj): {}.", e);
+                None
+            }
+        };
+
+        // If checksums couldn't be obtained or were incomplete from r2pipe, calculate them manually
+        bininfo.checksums = match checksums {
+            Some(cs) => Some(cs),
+            None => {
+                // If None, we need to calculate the checksums manually
+                info!("Falling back to manual checksum calculation in Rust");
+                match self.get_checksums() {
+                    Ok(manual_cs) => Some(manual_cs),
+                    Err(e) => {
+                        error!("Manual checksum calculation failed: {}", e);
+                        None // Checksums couldn't be calculated at all
+                    }
+                }
+            }
+        };
+
         info!("Binary information and checksums extracted.");
         info!("Writing extracted data to file");
         self.write_to_json(&json!(bininfo), job_type_suffix)?;
