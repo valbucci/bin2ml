@@ -23,6 +23,7 @@ use glob::glob;
 use regex::Regex;
 use std::fs;
 use std::fs::File;
+use std::string::String;
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
@@ -1385,6 +1386,14 @@ impl FileToBeProcessed {
         let mut output_filepath = output_dir.clone();
         // Sanitize the function name to create a valid filename.
         let sanitized_function_name = self.sanitize_function_name(function_name);
+
+        // If sanitized_function_name larger than 100 characters, snip
+        let sanitized_function_name = if sanitized_function_name.len() > 100 {
+            String::from(&sanitized_function_name[0..75])
+        } else {
+            sanitized_function_name
+        };
+
         let file_name = format!("{}.bin", sanitized_function_name);
         output_filepath.push(file_name);
 
