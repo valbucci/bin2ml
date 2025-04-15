@@ -81,6 +81,7 @@ pub struct R2PipeConfig {
     pub debug: bool,
     pub extended_analysis: bool,
     pub use_curl_pdb: bool,
+    pub timeout: Option<u64>,
 }
 
 impl std::fmt::Display for ExtractionJob {
@@ -478,6 +479,7 @@ impl ExtractionJob {
         debug: &bool,
         extended_analysis: &bool,
         use_curl_pdb: &bool,
+        timeout: &Option<u64>,
         with_annotations: &bool,
     ) -> Result<ExtractionJob, Error> {
         fn get_path_type(bin_path: &PathBuf) -> PathType {
@@ -538,6 +540,7 @@ impl ExtractionJob {
             debug: *debug,
             extended_analysis: *extended_analysis,
             use_curl_pdb: *use_curl_pdb,
+            timeout: *timeout,
         };
 
         let p_type = get_path_type(input_path);
@@ -1552,6 +1555,11 @@ impl FileToBeProcessed {
             None => R2Pipe::spawn(self.file_path.to_str().unwrap(), Some(opts))
                 .expect("Failed to spawn new R2Pipe"),
         };
+
+        if let Some(timeout) = self.r2p_config.timeout {
+            r2p.cmd(format!("e anal.timeout={}", timeout).as_str())
+                .expect("Failed to set timeout");
+        }
 
         if self.r2p_config.use_curl_pdb {
             let info = r2p.cmdj("ij");
