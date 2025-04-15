@@ -204,7 +204,7 @@ pub struct AEAFJRegisterBehaviour {
     #[serde(rename = "W")]
     pub w: Vec<String>,
     #[serde(rename = "V")]
-    pub v: Vec<String>,
+    pub v: Option<Vec<String>>,
     #[serde(rename = "N")]
     #[serde(default)]
     pub n: Vec<String>,
@@ -1289,7 +1289,10 @@ impl FileToBeProcessed {
         } else {
             let json_obj: Value = serde_json::from_str(&json)
                 .with_context(|| format!("Unable to convert {:?} to JSON object!", json))?;
-            let parsed_code = json_obj["code"].as_str().unwrap().to_string();
+            let parsed_code = json_obj["code"]
+                .as_str()
+                .with_context(|| format!("Unable to get code from {:?}!", json))?
+                .to_string();
             let parsed_obj = DecompJSON {
                 code: parsed_code,
                 annotations: Vec::new(),
