@@ -271,7 +271,6 @@ enum Commands {
         subcommands: GenerateSubCommands,
     },
     /// Extract raw data from input binaries
-    /// Extract raw data from input binaries
     Extract {
         /// The path to the dir or binary to be processed
         #[arg(short, long, value_name = "DIR")]
@@ -304,6 +303,9 @@ enum Commands {
 
         #[arg(long, default_value = "false")]
         use_curl_pdb: bool,
+
+        #[arg(long)]
+        timeout: Option<u64>,
 
         #[arg(long, default_value = "false")]
         with_annotations: bool,
@@ -1053,6 +1055,7 @@ fn main() {
             debug,
             extended_analysis,
             use_curl_pdb,
+            timeout,
             with_annotations,
         } => {
             info!("Creating extraction job with {} modes", modes.len());
@@ -1069,6 +1072,7 @@ fn main() {
                 debug,
                 extended_analysis,
                 use_curl_pdb,
+                timeout,
                 with_annotations,
             )
             .unwrap_or_else(|e| {

@@ -19,10 +19,17 @@ use serde_json::{json, Deserializer, Value};
 use std::collections::HashMap;
 use std::env;
 
+use md5;
+use sha1;
+use sha1::Digest as Sha1Digest;
+use sha2::Digest as Sha2Digest;
+use sha2::Sha256;
+
 use glob::glob;
 use regex::Regex;
 use std::fs;
 use std::fs::File;
+use std::io::{BufReader, Read};
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
@@ -74,6 +81,7 @@ pub struct R2PipeConfig {
     pub debug: bool,
     pub extended_analysis: bool,
     pub use_curl_pdb: bool,
+    pub timeout: Option<u64>,
 }
 
 impl std::fmt::Display for ExtractionJob {
@@ -196,7 +204,7 @@ pub struct AEAFJRegisterBehaviour {
     #[serde(rename = "W")]
     pub w: Vec<String>,
     #[serde(rename = "V")]
-    pub v: Vec<String>,
+    pub v: Option<Vec<String>>,
     #[serde(rename = "N")]
     #[serde(default)]
     pub n: Vec<String>,
@@ -392,7 +400,6 @@ pub struct FunctionZignature {
 // Structs for ij - Information about the binary file
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ChecksumsEntry {
-    // Output of itj
     md5: Option<String>,
     sha1: Option<String>,
     sha256: Option<String>,
@@ -472,6 +479,7 @@ impl ExtractionJob {
         debug: &bool,
         extended_analysis: &bool,
         use_curl_pdb: &bool,
+        timeout: &Option<u64>,
         with_annotations: &bool,
     ) -> Result<ExtractionJob, Error> {
         fn get_path_type(bin_path: &PathBuf) -> PathType {
@@ -532,6 +540,7 @@ impl ExtractionJob {
             debug: *debug,
             extended_analysis: *extended_analysis,
             use_curl_pdb: *use_curl_pdb,
+            timeout: *timeout,
         };
 
         let p_type = get_path_type(input_path);
@@ -806,14 +815,53 @@ impl FileToBeProcessed {
         let mut bininfo: BinaryInfo = serde_json::from_str(&bininfo_json)
             .with_context(|| format!("Unable to convert {:?} to JSON object!", bininfo_json))?;
 
-        let checksums_json = r2p
-            .cmd("itj")
-            .with_context(|| format!("Command itj failed in {:?}.", self.file_path))?;
-        let checksums: ChecksumsEntry = serde_json::from_str(&checksums_json)
-            .with_context(|| format!("Unable to convert {:?} to JSON object!", checksums_json))?;
+        // Attempt to get checksums from r2pipe first
+        let checksums = match r2p.cmd("itj") {
+            Ok(checksums_json) => {
+                debug!(
+                    "Successfully got checksums JSON from itj: {}",
+                    checksums_json
+                );
+                match serde_json::from_str::<ChecksumsEntry>(&checksums_json) {
+                    Ok(cs) => {
+                        // Check if all necessary checksums are present
+                        if cs.md5.is_some() && cs.sha1.is_some() && cs.sha256.is_some() {
+                            debug!("Using checksums from r2pipe (itj)");
+                            Some(cs)
+                        } else {
+                            warn!("Checksums from r2pipe (itj) are incomplete.");
+                            None
+                        }
+                    }
+                    Err(e) => {
+                        warn!("Failed to parse checksums JSON from r2pipe: {}.", e);
+                        None
+                    }
+                }
+            }
+            Err(e) => {
+                warn!("Failed to get checksums from r2pipe (itj): {}.", e);
+                None
+            }
+        };
 
-        bininfo.checksums = Some(checksums);
-        info!("Binary information extracted.");
+        // If checksums couldn't be obtained or were incomplete from r2pipe, calculate them manually
+        bininfo.checksums = match checksums {
+            Some(cs) => Some(cs),
+            None => {
+                // If None, we need to calculate the checksums manually
+                info!("Falling back to manual checksum calculation in Rust");
+                match self.get_checksums() {
+                    Ok(manual_cs) => Some(manual_cs),
+                    Err(e) => {
+                        error!("Manual checksum calculation failed: {}", e);
+                        None // Checksums couldn't be calculated at all
+                    }
+                }
+            }
+        };
+
+        info!("Binary information and checksums extracted.");
         info!("Writing extracted data to file");
         self.write_to_json(&json!(bininfo), job_type_suffix)?;
         Ok(())
@@ -1131,6 +1179,52 @@ impl FileToBeProcessed {
         Ok(())
     }
 
+    fn get_checksums(&self) -> Result<ChecksumsEntry, Error> {
+        // Open the file for reading
+        let file = File::open(&self.file_path)
+            .with_context(|| format!("Failed to open file {:?}", self.file_path))?;
+
+        // Create a buffered reader for efficient reading
+        let mut reader = BufReader::new(file);
+
+        // Initialize hashers
+        let mut md5_hasher = md5::Context::new();
+        let mut sha1_hasher = sha1::Sha1::new();
+        let mut sha256_hasher = Sha256::new();
+
+        // Use a reasonably sized buffer (64KB chunks)
+        let mut buffer = [0; 65536];
+
+        // Read the file in chunks and update all hashers
+        loop {
+            let bytes_read = reader
+                .read(&mut buffer)
+                .with_context(|| format!("Failed to read file {:?}", self.file_path))?;
+
+            if bytes_read == 0 {
+                // End of file
+                break;
+            }
+
+            // Update all hashers with this chunk
+            md5_hasher.consume(&buffer[..bytes_read]);
+            Sha1Digest::update(&mut sha1_hasher, &buffer[..bytes_read]);
+            Sha2Digest::update(&mut sha256_hasher, &buffer[..bytes_read]);
+        }
+
+        // Finalize all hashes
+        let md5_result = format!("{:x}", md5_hasher.compute());
+        let sha1_result = format!("{:x}", sha1_hasher.finalize());
+        let sha256_result = format!("{:x}", sha256_hasher.finalize());
+
+        // Return the results
+        Ok(ChecksumsEntry {
+            md5: Some(md5_result),
+            sha1: Some(sha1_result),
+            sha256: Some(sha256_result),
+        })
+    }
+
     // r2 commands to structs
     fn get_bytes_function(
         &self,
@@ -1195,7 +1289,10 @@ impl FileToBeProcessed {
         } else {
             let json_obj: Value = serde_json::from_str(&json)
                 .with_context(|| format!("Unable to convert {:?} to JSON object!", json))?;
-            let parsed_code = json_obj["code"].as_str().unwrap().to_string();
+            let parsed_code = json_obj["code"]
+                .as_str()
+                .with_context(|| format!("Unable to get code from {:?}!", json))?
+                .to_string();
             let parsed_obj = DecompJSON {
                 code: parsed_code,
                 annotations: Vec::new(),
@@ -1461,6 +1558,11 @@ impl FileToBeProcessed {
             None => R2Pipe::spawn(self.file_path.to_str().unwrap(), Some(opts))
                 .expect("Failed to spawn new R2Pipe"),
         };
+
+        if let Some(timeout) = self.r2p_config.timeout {
+            r2p.cmd(format!("e anal.timeout={}", timeout).as_str())
+                .expect("Failed to set timeout");
+        }
 
         if self.r2p_config.use_curl_pdb {
             let info = r2p.cmdj("ij");
