@@ -325,12 +325,19 @@ impl AGFJFile {
     /// within an AGFJFile.
     pub fn paralell_attributed_cfg_gen(self) {
         self.functions.unwrap().par_iter().for_each(|func| {
+            let arch = self.architecture.as_ref();
+            if arch.is_none() {
+                warn!(
+                    "Architecture not detected for {:?}. Using X86 as default.",
+                    self.filename
+                );
+            }
             func[0].generate_attributed_cfg(
                 &self.filename,
                 &self.min_blocks,
                 &self.output_path,
                 self.feature_type.unwrap(),
-                self.architecture.as_ref().unwrap(),
+                arch.unwrap_or(&"X86".to_string()),
             )
         });
     }
