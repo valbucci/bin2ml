@@ -324,14 +324,14 @@ impl AGFJFile {
     /// Generate Attributed Control Flow Graph (ACFG)'s for each of the functions
     /// within an AGFJFile.
     pub fn paralell_attributed_cfg_gen(self) {
+        let arch = self.architecture.as_ref();
+        if arch.is_none() {
+            warn!(
+                "Architecture not detected for {:?}. Using X86 as default.",
+                self.filename
+            );
+        }
         self.functions.unwrap().par_iter().for_each(|func| {
-            let arch = self.architecture.as_ref();
-            if arch.is_none() {
-                warn!(
-                    "Architecture not detected for {:?}. Using X86 as default.",
-                    self.filename
-                );
-            }
             func[0].generate_attributed_cfg(
                 &self.filename,
                 &self.min_blocks,
