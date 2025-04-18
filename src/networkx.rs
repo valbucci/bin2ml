@@ -8,7 +8,6 @@ use petgraph::prelude::Graph;
 use petgraph::visit::EdgeRef;
 use serde::{Deserialize, Serialize};
 use std::fs::File;
-use std::io::Write;
 use std::path::Path;
 
 #[derive(Default, Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -23,12 +22,12 @@ pub struct NetworkxDiGraph<N> {
 
 impl<N: Serialize> NetworkxDiGraph<N> {
     pub fn save_to_json<P: AsRef<Path>>(&self, path: P) -> std::io::Result<()> {
-        // Serialize the struct to a JSON string
-        let json = serde_json::to_string(self)?;
+        let file = File::create(path)?;
+        let writer = std::io::BufWriter::new(file);
 
-        // Open the file and write the JSON string
-        let mut file = File::create(path)?;
-        file.write_all(json.as_bytes())?;
+        // Use serde_json::to_writer directly to avoid string size limitations
+        serde_json::to_writer(writer, self)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
 
         Ok(())
     }
