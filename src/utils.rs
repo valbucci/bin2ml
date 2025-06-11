@@ -74,6 +74,20 @@ pub fn get_save_file_path(
     }
 }
 
+/// Validate the function filename template
+///
+/// This function validates the function filename template to ensure it is a valid template.
+/// The template must be a string containing `{symbol}` or `{address}`.
+pub fn validate_func_filename(s: &str) -> Result<String, String> {
+    if s == "symbol" || s == "address" {
+        Ok(s.to_string())
+    } else if s.contains("{symbol}") || s.contains("{address}") {
+        Ok(s.to_string())
+    } else {
+        Err("must be `symbol`, `address`, or a pattern containing `{symbol}`/`{address}`".to_string())
+    }
+}
+
 /// Get the JSON paths from a directory
 ///
 /// This function takes a path to a directory and traverses all
