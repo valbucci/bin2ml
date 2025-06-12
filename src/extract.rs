@@ -1,5 +1,6 @@
 use crate::afij::AFIJFunctionInfo;
 use crate::agcj::AGCJFunctionCallGraph;
+use crate::utils::sanitize_filename;
 
 use anyhow::anyhow;
 use anyhow::bail;
@@ -15,7 +16,6 @@ use serde_json;
 
 use glob::glob;
 use md5;
-use regex::Regex;
 use serde_json::{json, Deserializer, Value};
 use sha1;
 use sha1::Digest as Sha1Digest;
@@ -704,23 +704,6 @@ impl ExtractionJob {
 }
 
 impl FunctionToBeProcessed {
-
-    // Helper functions
-    fn sanitize_name(name: &str) -> String {
-        // Replace non-valid characters with '_'
-        // Valid characters: letters, digits, '_', '-', and '.'
-        let re = Regex::new(r"[^\w.-]").unwrap();
-        re.replace_all(name, "_").into_owned()
-    }
-
-    fn shorten_name(name: &str) -> String {
-        if name.len() > 100 {
-            name[..50].to_string() + &name[name.len() - 50..]
-        } else {
-            name.to_string()
-        }
-    }
-
     fn write_to_bin(&self, r2p: &mut R2Pipe, output_dirpath: &PathBuf, filename_template: &str) -> Result<()> {
         let func_bytes = self.get_bytes(r2p)?;
         let output_filepath = self.get_output_filepath(output_dirpath, filename_template, "bin");
@@ -733,7 +716,7 @@ impl FunctionToBeProcessed {
         format!("{:x}", self.addr).trim_start_matches("0x").to_string()
     }
 
-    fn get_func_filename(&self, template: &str, ext: &str) -> String {
+    fn get_output_filename(&self, template: &str, ext: &str) -> String {
         let mut func_filename = match template {
             "symbol" => self.name.clone(),
             "address" => self.get_hex_address(),
@@ -742,8 +725,7 @@ impl FunctionToBeProcessed {
                          .replace("{ext}", ext),
         };
 
-        func_filename = Self::sanitize_name(&func_filename);
-        func_filename = Self::shorten_name(&func_filename);
+        func_filename = sanitize_filename(&func_filename);
         if ["symbol", "address"].contains(&template) {
             // Add an extension only if the user did not specify a custom template
             func_filename = func_filename + "." + ext;
@@ -752,7 +734,7 @@ impl FunctionToBeProcessed {
     }
 
     pub fn get_output_filepath(&self, output_dirpath: &PathBuf, filename_template: &str, ext: &str) -> PathBuf {
-        let output_filename = self.get_func_filename(filename_template, ext);
+        let output_filename = self.get_output_filename(filename_template, ext);
 
         let mut output_filepath = PathBuf::new();
         output_filepath.push(output_dirpath);
