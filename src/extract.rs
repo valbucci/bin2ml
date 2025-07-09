@@ -959,7 +959,7 @@ impl FileToBeProcessed {
             let job_type_suffix = ExtractionJob::get_job_type_suffix(job_type);
             let output_path = self.get_output_filepath(&job_type_suffix).unwrap();
             if Path::new(&output_path).exists() {
-                warn!(
+                debug!(
                     "Skipping {:?} job for {:?}: already processed at {:?}.",
                     job_type_suffix, self.file_path, output_path
                 );
