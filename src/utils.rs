@@ -1,6 +1,6 @@
+use regex::Regex;
 use std::fs::create_dir_all;
 use std::path::{Path, PathBuf};
-use regex::Regex;
 use walkdir::WalkDir;
 
 /// Formats a save file path
@@ -85,7 +85,10 @@ pub fn validate_func_filename(s: &str) -> Result<String, String> {
     } else if s.contains("{symbol}") || s.contains("{address}") {
         Ok(s.to_string())
     } else {
-        Err("must be `symbol`, `address`, or a pattern containing `{symbol}`/`{address}`".to_string())
+        Err(
+            "must be `symbol`, `address`, or a pattern containing `{symbol}`/`{address}`"
+                .to_string(),
+        )
     }
 }
 
