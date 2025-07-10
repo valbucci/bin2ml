@@ -8,7 +8,8 @@ use std::fmt;
 extern crate log;
 use clap::builder::TypedValueParser;
 use env_logger::Env;
-use indicatif::{ParallelProgressIterator, ProgressIterator};
+use indicatif::MultiProgress;
+use indicatif_log_bridge::LogWrapper;
 
 use glob::glob;
 use mimalloc::MiMalloc;
@@ -16,6 +17,7 @@ use rayon::iter::ParallelIterator;
 use rayon::prelude::IntoParallelRefIterator;
 use std::path::{Path, PathBuf};
 use std::process::exit;
+use std::sync::Arc;
 use walkdir::WalkDir;
 
 pub mod afij;
@@ -63,6 +65,22 @@ use utils::{get_json_paths_from_dir, validate_func_filename};
 
 #[global_allocator]
 static GLOBAL: MiMalloc = MiMalloc;
+
+// Global multi-progress instance for coordinating progress bars
+static MULTI_PROGRESS: std::sync::OnceLock<Arc<MultiProgress>> = std::sync::OnceLock::new();
+
+/// Get the global multi-progress instance
+fn get_multi_progress() -> Arc<MultiProgress> {
+    MULTI_PROGRESS.get().expect("Multi-progress not initialized").clone()
+}
+
+/// Create a progress bar that works with the log bridge
+fn create_progress_bar(len: u64) -> indicatif::ProgressBar {
+    let multi = get_multi_progress();
+    let pb = indicatif::ProgressBar::new(len);
+    multi.add(pb.clone());
+    pb
+}
 
 #[derive(PartialEq, Copy, Clone)]
 pub enum DataType {
@@ -417,11 +435,28 @@ enum DedupSubCommands {
 fn main() {
     let cli = Cli::parse();
     
-    let env = Env::default()
-        .filter_or("LOG_LEVEL", &cli.log_level)
-        .write_style_or("LOG_STYLE", "always");
-
-    env_logger::init_from_env(env);
+    // Set up the multi-progress for coordinating progress bars
+    let multi = MultiProgress::new();
+    let multi_arc = Arc::new(multi);
+    
+    // Store the multi-progress instance globally
+    MULTI_PROGRESS.set(multi_arc.clone()).expect("Failed to set global multi-progress");
+    
+    // Build the logger with the specified log level
+    let logger = env_logger::Builder::from_env(
+        Env::default()
+            .filter_or("LOG_LEVEL", &cli.log_level)
+            .write_style_or("LOG_STYLE", "always")
+    ).build();
+    
+    let level = logger.filter();
+    
+    // Set up the log bridge to prevent log messages from breaking progress bars
+    LogWrapper::new(multi_arc.as_ref().clone(), logger)
+        .try_init()
+        .expect("Failed to initialize log wrapper");
+    
+    log::set_max_level(level);
     match &cli.command {
         #[cfg(feature = "goblin")]
         Commands::Info { path } => {
@@ -684,7 +719,8 @@ fn main() {
                     // if without metadata
                     if !with_features & metadata_type.is_none() {
                         debug!("Creating call graphs without any node features");
-                        file_paths_vec.par_iter().progress().for_each(|path| {
+                        let pb = create_progress_bar(file_paths_vec.len() as u64);
+                        file_paths_vec.par_iter().for_each(|path| {
                             let suffix = graph_type.to_owned().to_string();
                             let full_output_path = get_save_file_path(
                                 &PathBuf::from(path),
@@ -715,7 +751,9 @@ fn main() {
                                     full_output_path.to_string_lossy()
                                 )
                             }
-                        })
+                            pb.inc(1);
+                        });
+                        pb.finish();
                     } else {
                         info!("Creating call graphs with node features");
                         debug!("Getting metadata file paths");
@@ -744,7 +782,8 @@ fn main() {
                             .zip(metadata_paths_vec)
                             .collect::<Vec<_>>();
 
-                        combined_cgs_metadata.par_iter().progress().for_each(
+                        let pb = create_progress_bar(combined_cgs_metadata.len() as u64);
+                        combined_cgs_metadata.par_iter().for_each(
                             |(filepath, metapath)| {
                                 let suffix = format!("{}-meta", graph_type.to_owned());
                                 let full_output_path = get_save_file_path(
@@ -831,8 +870,10 @@ fn main() {
                                         full_output_path.to_string_lossy()
                                     )
                                 }
+                                pb.inc(1);
                             },
                         );
+                        pb.finish();
                     }
                 }
             }
@@ -1025,7 +1066,8 @@ fn main() {
                         "{} files found. Beginning Processing.",
                         file_paths_vec.len()
                     );
-                    for file in file_paths_vec.iter().progress() {
+                    let pb = create_progress_bar(file_paths_vec.len() as u64);
+                    for file in file_paths_vec.iter() {
                         let file = AGFJFile {
                             functions: None,
                             filename: PathBuf::from(file),
@@ -1040,8 +1082,10 @@ fn main() {
                             instruction_type,
                             random_walk,
                             *pairs,
-                        )
+                        );
+                        pb.inc(1);
                     }
+                    pb.finish();
                 }
             }
             GenerateSubCommands::Tokeniser {
@@ -1116,11 +1160,15 @@ fn main() {
                     .build_global()
                     .unwrap();
 
+                let pb = create_progress_bar(job.files_to_be_processed.len() as u64);
                 // Process all files in parallel, each file processes all modes with a single r2pipe
                 job.files_to_be_processed
                     .par_iter()
-                    .progress()
-                    .for_each(|path| path.process_all_modes());
+                    .for_each(|path| {
+                        path.process_all_modes();
+                        pb.inc(1);
+                    });
+                pb.finish();
             } else if job.input_path_type == PathType::File {
                 info!("Single file found");
 
@@ -1195,9 +1243,12 @@ fn main() {
 
                 warn!("This only supports the Cisco Talos Binary Sim Dataset naming convention");
                 let corpus = EsilFuncStringCorpus::new(filename, output_path).unwrap();
-                corpus.uniq_binaries.par_iter().progress().for_each(|name| {
-                    corpus.dedup_subset(name, *print_stats, *just_stats, *just_hash_value)
+                let pb = create_progress_bar(corpus.uniq_binaries.len() as u64);
+                corpus.uniq_binaries.par_iter().for_each(|name| {
+                    corpus.dedup_subset(name, *print_stats, *just_stats, *just_hash_value);
+                    pb.inc(1);
                 });
+                pb.finish();
             }
         },
     }
