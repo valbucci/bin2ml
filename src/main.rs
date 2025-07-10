@@ -93,6 +93,10 @@ impl fmt::Display for DataType {
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
 struct Cli {
+    /// Set the logging level
+    #[arg(short, long, value_name = "LEVEL", default_value = "warn", value_parser = clap::builder::PossibleValuesParser::new(["off", "error", "warn", "info", "debug", "trace"]))]
+    log_level: String,
+
     #[command(subcommand)]
     command: Commands,
 }
@@ -411,12 +415,13 @@ enum DedupSubCommands {
 }
 
 fn main() {
+    let cli = Cli::parse();
+    
     let env = Env::default()
-        .filter_or("LOG_LEVEL", "warn")
+        .filter_or("LOG_LEVEL", &cli.log_level)
         .write_style_or("LOG_STYLE", "always");
 
     env_logger::init_from_env(env);
-    let cli = Cli::parse();
     match &cli.command {
         #[cfg(feature = "goblin")]
         Commands::Info { path } => {
