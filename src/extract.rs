@@ -26,7 +26,7 @@ use std::env;
 use std::fs;
 use std::fs::File;
 use std::io::{BufReader, Read};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::string::String;
 use std::sync::LazyLock;
 use walkdir::WalkDir;
@@ -92,6 +92,7 @@ pub struct FileToBeProcessed {
     pub job_types: Vec<ExtractionJobType>,
     pub r2p_config: R2PipeConfig,
     pub with_annotations: bool,
+    pub retry_aborted: bool,
     pub func_filename_template: String,
 }
 
@@ -277,6 +278,7 @@ impl
         Vec<ExtractionJobType>,
         R2PipeConfig,
         bool,
+        bool,
         String,
     )> for FileToBeProcessed
 {
@@ -287,6 +289,7 @@ impl
             Vec<ExtractionJobType>,
             R2PipeConfig,
             bool,
+            bool,
             String,
         ),
     ) -> FileToBeProcessed {
@@ -296,7 +299,8 @@ impl
             job_types: orig.2,
             r2p_config: orig.3,
             with_annotations: orig.4,
-            func_filename_template: orig.5,
+            retry_aborted: orig.5,
+            func_filename_template: orig.6,
         }
     }
 }
@@ -568,6 +572,7 @@ impl ExtractionJob {
         func_filename_template: &str,
         timeout: &Option<u64>,
         with_annotations: &bool,
+        retry_aborted: &bool,
     ) -> Result<ExtractionJob, Error> {
         let mut job_types = vec![];
         let mut extraction_job_types = vec![];
@@ -604,6 +609,7 @@ impl ExtractionJob {
                     job_types: extraction_job_types, // Use the vector of just ExtractionJobType
                     r2p_config: r2_handle_config,
                     with_annotations: *with_annotations,
+                    retry_aborted: *retry_aborted,
                     func_filename_template: func_filename_template.to_string(),
                 };
 
@@ -635,6 +641,7 @@ impl ExtractionJob {
                         job_types: extraction_job_types.clone(),
                         r2p_config: r2_handle_config,
                         with_annotations: *with_annotations,
+                        retry_aborted: *retry_aborted,
                         func_filename_template: func_filename_template.to_string(),
                     })
                     .collect();
@@ -1011,11 +1018,25 @@ impl FileToBeProcessed {
 
             // Check if the extracted data file already exists
             let job_type_suffix = ExtractionJob::get_job_type_suffix(job_type);
-            let output_path = self.get_output_filepath(&job_type_suffix).unwrap();
-            if Path::new(&output_path).exists() {
+            let output_path = match self.get_output_filepath(&job_type_suffix) {
+                Ok(path) => path,
+                Err(e) => {
+                    error!("Failed to get output filepath for {:?}: {}", job_type, e);
+                    continue;
+                }
+            };
+            let error_path = output_path.with_extension("error.log");
+
+            if output_path.exists() {
                 debug!(
                     "Skipping {:?} job for {:?}: already processed at {:?}.",
                     job_type_suffix, self.file_path, output_path
+                );
+                continue;
+            } else if error_path.exists() && !self.retry_aborted {
+                debug!(
+                    "Skipping {:?} job for {:?}: already processed and failed. Error log at {:?}.",
+                    job_type_suffix, self.file_path, error_path
                 );
                 continue;
             }
@@ -1032,10 +1053,13 @@ impl FileToBeProcessed {
                     "Finished {:?} extraction job for {:?}: processed at {:?}.",
                     job_type_suffix, self.file_path, output_path
                 ),
-                Err(e) => error!(
-                    "Aborted {:?} extraction job for {:?} due to error: {:?}.",
-                    job_type_suffix, self.file_path, e
-                ),
+                Err(e) => {
+                    error!(
+                        "Aborted {:?} extraction job for {:?} due to error:\n{:?}\n\t> (stored in {:?}).",
+                        job_type_suffix, self.file_path, e, error_path
+                    );
+                    std::fs::write(error_path, format!("{}", e)).unwrap();
+                }
             }
         }
 

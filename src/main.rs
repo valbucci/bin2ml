@@ -318,6 +318,10 @@ enum Commands {
 
         #[arg(long, default_value = "false")]
         with_annotations: bool,
+
+        /// Toggle to retry previously aborted jobs due to extraction failures
+        #[arg(long, default_value = "false")]
+        retry_aborted: bool,
     },
     /// Generate single embeddings on the fly
     ///
@@ -1067,6 +1071,7 @@ fn main() {
             func_filename,
             timeout,
             with_annotations,
+            retry_aborted,
         } => {
             info!("Creating extraction job with {} modes", modes.len());
             if !output_dir.exists() {
@@ -1085,6 +1090,7 @@ fn main() {
                 func_filename,
                 timeout,
                 with_annotations,
+                retry_aborted,
             )
             .unwrap_or_else(|e| {
                 error!("Failed to create extraction job: {}", e);
