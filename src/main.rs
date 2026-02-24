@@ -357,9 +357,6 @@ enum Commands {
         #[arg(long, default_value = "false")]
         with_annotations: bool,
 
-        #[arg(long, default_value = "false")]
-        keep_raw_bytes: bool,
-
         /// Toggle to retry previously aborted jobs due to extraction failures
         #[arg(long, default_value = "false")]
         retry_aborted: bool,
@@ -1149,7 +1146,6 @@ fn main() {
             func_filename,
             timeout,
             with_annotations,
-            keep_raw_bytes,
             retry_aborted,
             min_basic_blocks,
         } => {
@@ -1186,7 +1182,6 @@ fn main() {
                 func_filename,
                 timeout,
                 with_annotations,
-                keep_raw_bytes,
                 retry_aborted,
                 min_basic_blocks,
             )

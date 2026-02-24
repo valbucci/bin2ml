@@ -99,7 +99,6 @@ pub struct FileToBeProcessed {
     pub job_types: Vec<ExtractionJobType>,
     pub r2p_config: R2PipeConfig,
     pub with_annotations: bool,
-    pub keep_raw_bytes: bool,
     pub retry_aborted: bool,
     pub func_filename_template: String,
     pub function_list: OnceCell<Vec<FunctionToBeProcessed>>,
@@ -307,7 +306,6 @@ impl
         R2PipeConfig,
         bool,
         bool,
-        bool,
         String,
         Option<u16>,
         bool,
@@ -321,7 +319,6 @@ impl
             R2PipeConfig,
             bool,
             bool,
-            bool,
             String,
             Option<u16>,
             bool,
@@ -333,12 +330,11 @@ impl
             job_types: orig.2,
             r2p_config: orig.3,
             with_annotations: orig.4,
-            keep_raw_bytes: orig.5,
-            retry_aborted: orig.6,
-            func_filename_template: orig.7,
+            retry_aborted: orig.5,
+            func_filename_template: orig.6,
             function_list: OnceCell::new(),
-            min_basic_blocks: orig.8,
-            needs_func_list: orig.9,
+            min_basic_blocks: orig.7,
+            needs_func_list: orig.8,
         }
     }
 }
@@ -507,7 +503,7 @@ pub struct StringEntry {
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FuncBytes {
     pub bytes: Vec<u8>,
-    pub masked_bytes: Option<Vec<u8>>,
+    pub mask: Option<Vec<u8>>,
 }
 
 // Structs for zj - Function signatures (called "zignatures" in r2)
@@ -638,7 +634,6 @@ impl ExtractionJob {
         func_filename_template: &str,
         timeout: &Option<u64>,
         with_annotations: &bool,
-        keep_raw_bytes: &bool,
         retry_aborted: &bool,
         min_basic_blocks: &Option<u16>,
     ) -> Result<ExtractionJob, Error> {
@@ -666,9 +661,7 @@ impl ExtractionJob {
                 mode
             );
         }
-        if !extraction_job_types.contains(&ExtractionJobType::FunctionBytesMasked)
-            && *keep_raw_bytes
-        {
+        if !extraction_job_types.contains(&ExtractionJobType::FunctionBytesMasked) {
             let mode = ExtractionJob::get_job_type_suffix(&ExtractionJobType::FunctionBytesMasked);
             warn!(
                 "Keep raw bytes is only supported for masked bytes extraction (mode: {})",
@@ -701,7 +694,6 @@ impl ExtractionJob {
                     job_types: extraction_job_types, // Use the vector of just ExtractionJobType
                     r2p_config: r2_handle_config,
                     with_annotations: *with_annotations,
-                    keep_raw_bytes: *keep_raw_bytes,
                     retry_aborted: *retry_aborted,
                     func_filename_template: func_filename_template.to_string(),
                     function_list: OnceCell::new(),
@@ -737,7 +729,6 @@ impl ExtractionJob {
                         job_types: extraction_job_types.clone(),
                         r2p_config: r2_handle_config.clone(),
                         with_annotations: *with_annotations,
-                        keep_raw_bytes: *keep_raw_bytes,
                         retry_aborted: *retry_aborted,
                         func_filename_template: func_filename_template.to_string(),
                         function_list: OnceCell::new(),
@@ -854,43 +845,40 @@ impl ExtractionJob {
 
 impl FunctionToBeProcessed {
     /// Write function bytes to a binary file with suffix .bin
-    /// If apply_mask is true, write function masked bytes to a binary file with suffix .masked.bin
+    /// If extract_mask is true, write function masked bytes to a binary file with suffix .mask.bin
     fn write_to_bin(
         &self,
         r2p: &mut R2Pipe,
         output_dirpath: &PathBuf,
         filename_template: &str,
-        apply_mask: bool,
-        keep_raw_bytes: bool,
+        extract_mask: bool,
     ) -> Result<()> {
         // Destructure immediately to allow early dropping of bytes
         let FuncBytes {
             bytes,
-            masked_bytes,
+            mask: masked_bytes,
         } = self
-            .get_bytes(r2p, apply_mask)
+            .get_bytes(r2p, extract_mask)
             .map_err(|e| anyhow::anyhow!("Failed to get bytes: {}", e))?;
 
-        // Store the bytes if the user specified to keep the raw bytes
-        // or if the byte mask is not applied
-        if keep_raw_bytes || !apply_mask {
-            // Setup output filepaths for function bytes
-            let bytes_ext =
-                FunctionToBeProcessed::get_function_file_ext(&ExtractionJobType::FunctionBytes);
-            let bytes_filepath =
-                self.get_output_filepath(output_dirpath, filename_template, bytes_ext);
+        // Store the function raw bytes 
+        // Setup output filepaths for function bytes
+        let bytes_ext =
+            FunctionToBeProcessed::get_function_file_ext(&ExtractionJobType::FunctionBytes);
+        let bytes_filepath =
+            self.get_output_filepath(output_dirpath, filename_template, bytes_ext);
 
-            debug!("Writing function bytes to file: {:?}", bytes_filepath);
-            std::fs::write(&bytes_filepath, &bytes).with_context(|| {
-                format!(
-                    "Failed to write function bytes to file: {:?}",
-                    bytes_filepath
-                )
-            })?;
-        }
+        debug!("Writing function bytes to file: {:?}", bytes_filepath);
+        std::fs::write(&bytes_filepath, &bytes).with_context(|| {
+            format!(
+                "Failed to write function bytes to file: {:?}",
+                bytes_filepath
+            )
+        })?;
 
-        if apply_mask {
-            let bytes_mask = masked_bytes.context("Masked bytes missing from get_bytes output")?;
+        if extract_mask {
+            // Store the function byte mask (for signature comparison)
+            let bytes_mask = masked_bytes.context("Bytes mask missing from get_bytes output")?;
 
             // Setup output filepaths for masked bytes
             let masked_bytes_ext = FunctionToBeProcessed::get_function_file_ext(
@@ -1114,8 +1102,8 @@ impl FunctionToBeProcessed {
         Ok(mask)
     }
 
-    fn get_bytes(&self, r2p: &mut R2Pipe, apply_mask: bool) -> Result<FuncBytes, Error> {
-        if apply_mask {
+    fn get_bytes(&self, r2p: &mut R2Pipe, extract_mask: bool) -> Result<FuncBytes, Error> {
+        if extract_mask {
             let cmd_str = format!("p8fm @ {}", self.addr);
             debug!(
                 "Getting function bytes and mask for function: `{}`",
@@ -1126,7 +1114,6 @@ impl FunctionToBeProcessed {
             let raw_output = r2p.cmd(&cmd_str).context("Failed to execute `{}`")?;
 
             let parts: Vec<&str> = raw_output.trim().split(":").collect();
-
             if parts.len() < 2 {
                 return Err(anyhow::anyhow!(
                     "Invalid output format from `{}`: expected 'bytes:mask",
@@ -1156,7 +1143,7 @@ impl FunctionToBeProcessed {
             }
 
             // Compute masked bytes if lengths match
-            let masked_bytes = if function_mask.len() != function_bytes.len() {
+            let maybe_mask = if function_mask.len() != function_bytes.len() {
                 error!(
                     "After fix-up, lengths still differ: bytes={} mask={}",
                     function_bytes.len(),
@@ -1164,19 +1151,12 @@ impl FunctionToBeProcessed {
                 );
                 None
             } else {
-                // Use iterators to avoid indexing overhead and be more idiomatic
-                Some(
-                    function_bytes
-                        .iter()
-                        .zip(function_mask.iter())
-                        .map(|(&b, &m)| b & m)
-                        .collect(),
-                )
+                Some(function_mask)
             };
 
             Ok(FuncBytes {
                 bytes: function_bytes,
-                masked_bytes: masked_bytes,
+                mask: maybe_mask,
             })
         } else {
             let cmd_str = format!("p8f @ {}", self.addr);
@@ -1193,7 +1173,7 @@ impl FunctionToBeProcessed {
 
             Ok(FuncBytes {
                 bytes: function_bytes,
-                masked_bytes: None,
+                mask: None,
             })
         }
     }
@@ -2112,7 +2092,7 @@ impl FileToBeProcessed {
         &self,
         r2p: &mut R2Pipe,
         output_dirpath: &PathBuf,
-        apply_mask: bool,
+        extract_mask: bool,
     ) -> Result<()> {
         info!("Starting function bytes extraction");
 
@@ -2123,16 +2103,15 @@ impl FileToBeProcessed {
                 .with_context(|| format!("Failed to create directory {:?}", output_dirpath))?;
         }
 
-        if !apply_mask || self.keep_raw_bytes {
-            // Write index for the raw bytes
-            self.write_function_index(
-                &functions.to_vec(),
-                &output_dirpath,
-                ExtractionJobType::FunctionBytes,
-            )?;
-        }
-        if apply_mask {
-            // Write index for the masked bytes
+        // Write index for the raw bytes
+        self.write_function_index(
+            &functions.to_vec(),
+            &output_dirpath,
+            ExtractionJobType::FunctionBytes,
+        )?;
+    
+        if extract_mask {
+            // Write index for the function bytes masks
             self.write_function_index(
                 &functions.to_vec(),
                 &output_dirpath,
@@ -2140,22 +2119,16 @@ impl FileToBeProcessed {
             )?;
         }
 
-        // Determine which job types need to be extracted
-        let write_raw = !apply_mask || self.keep_raw_bytes;
-        let write_masked = apply_mask;
-
-        let job_types: Vec<ExtractionJobType> = match (write_raw, write_masked) {
-            (true, true) => vec![
+        // Store extracted job types to determine extracted files' extension
+        // later down the line
+        let write_mask = extract_mask;
+        let job_types: Vec<ExtractionJobType> = if write_mask {
+            vec![
                 ExtractionJobType::FunctionBytes,
                 ExtractionJobType::FunctionBytesMasked,
-            ],
-            (true, false) => vec![ExtractionJobType::FunctionBytes],
-            (false, true) => vec![ExtractionJobType::FunctionBytesMasked],
-            (false, false) => {
-                // This should never happen
-                warn!("Neither raw nor masked bytes requested for {:?}", file_name);
-                return Ok(());
-            }
+            ]
+        } else {
+            vec![ExtractionJobType::FunctionBytes]
         };
 
         // Use centralized extraction with resume capability
@@ -2172,8 +2145,7 @@ impl FileToBeProcessed {
                     r2p,
                     output_dirpath,
                     &self.func_filename_template,
-                    apply_mask,
-                    self.keep_raw_bytes,
+                    extract_mask
                 );
                 if result.is_ok() {
                     debug!(
