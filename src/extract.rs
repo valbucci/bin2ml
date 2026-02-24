@@ -942,7 +942,7 @@ impl FunctionToBeProcessed {
         // Based on the job type, return the file extension for the output function file
         match job_type {
             ExtractionJobType::FunctionBytes => "raw.bin",
-            ExtractionJobType::FunctionBytesMasked => "masked.bin",
+            ExtractionJobType::FunctionBytesMasked => "mask.bin",
             ExtractionJobType::FunctionCFG => "json",
             _ => "",
         }
