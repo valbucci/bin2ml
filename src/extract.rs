@@ -1159,7 +1159,7 @@ impl FunctionToBeProcessed {
                 mask: maybe_mask,
             })
         } else {
-            let cmd_str = format!("p8f @ {}", self.addr);
+            let cmd_str = format!("p8 {} @ {}", self.size, self.addr);
             debug!("Getting function bytes for function: `{}`", cmd_str);
 
             let raw_output = r2p.cmd(&cmd_str).context("Failed to execute `{}`")?;
