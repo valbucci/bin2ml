@@ -98,11 +98,8 @@ pub struct FileToBeProcessed {
     pub output_path: PathBuf,
     pub job_types: Vec<ExtractionJobType>,
     pub r2p_config: R2PipeConfig,
-    pub with_annotations: bool,
-    pub retry_aborted: bool,
-    pub func_filename_template: String,
+    pub options: ExtractionOptions,
     pub function_list: OnceCell<Vec<FunctionToBeProcessed>>,
-    pub min_basic_blocks: Option<u16>,
     needs_func_list: bool,
 }
 
@@ -115,11 +112,14 @@ pub struct FunctionToBeProcessed {
     pub nblocks: u64,
 }
 
+#[derive(Debug, Clone)]
 pub struct ExtractionOptions {
     pub retry_aborted: bool,
     pub with_annotations: bool,
     pub min_basic_blocks: Option<u16>,
     pub func_filename_template: String,
+    pub bytes_to_tar: bool,
+    pub func_cfg_to_json: bool,
 }
 
 #[derive(Debug)]
@@ -311,6 +311,7 @@ impl
         String,
         Vec<ExtractionJobType>,
         R2PipeConfig,
+        ExtractionOptions,
         bool,
         bool,
         String,
@@ -324,6 +325,7 @@ impl
             String,
             Vec<ExtractionJobType>,
             R2PipeConfig,
+            ExtractionOptions,
             bool,
             bool,
             String,
@@ -336,12 +338,9 @@ impl
             output_path: PathBuf::from(orig.1),
             job_types: orig.2,
             r2p_config: orig.3,
-            with_annotations: orig.4,
-            retry_aborted: orig.5,
-            func_filename_template: orig.6,
+            options: orig.4,
             function_list: OnceCell::new(),
-            min_basic_blocks: orig.7,
-            needs_func_list: orig.8,
+            needs_func_list: orig.6,
         }
     }
 }
@@ -676,11 +675,8 @@ impl ExtractionJob {
                     output_path: output_path.to_owned(),
                     job_types: extraction_job_types, // Use the vector of just ExtractionJobType
                     r2p_config: r2_handle_config,
-                    with_annotations: extraction_options.with_annotations,
-                    retry_aborted: extraction_options.retry_aborted,
-                    func_filename_template: extraction_options.func_filename_template.to_string(),
+                    options: extraction_options,
                     function_list: OnceCell::new(),
-                    min_basic_blocks: extraction_options.min_basic_blocks,
                     needs_func_list,
                 };
 
@@ -711,11 +707,8 @@ impl ExtractionJob {
                         output_path: output_path.to_owned(),
                         job_types: extraction_job_types.clone(),
                         r2p_config: r2_handle_config.clone(),
-                        with_annotations: extraction_options.with_annotations,
-                        retry_aborted: extraction_options.retry_aborted,
-                        func_filename_template: extraction_options.func_filename_template.to_string(),
+                        options: extraction_options.clone(),
                         function_list: OnceCell::new(),
-                        min_basic_blocks: extraction_options.min_basic_blocks,
                         needs_func_list,
                     })
                     .collect();
@@ -1279,7 +1272,7 @@ impl FileToBeProcessed {
         let ext_str = ext.map_or("".to_string(), |e| format!(".{}", e));
         let mut output_filename = self.get_file_name()?;
 
-        if job_type == ExtractionJobType::Decompilation && self.with_annotations {
+        if job_type == ExtractionJobType::Decompilation && self.options.with_annotations {
             output_filename = output_filename + "_" + job_type_suffix + "_annotations" + &ext_str;
         } else {
             output_filename = output_filename + "_" + job_type_suffix + &ext_str;
@@ -1404,7 +1397,7 @@ impl FileToBeProcessed {
         // Write function records
         for function in functions {
             let output_path =
-                function.get_output_filepath(output_dirpath, &self.func_filename_template, ext);
+                function.get_output_filepath(output_dirpath, &self.options.func_filename_template, ext);
             writer.write_record([
                 &function.name,
                 &function.addr.to_string(),
@@ -1470,7 +1463,7 @@ impl FileToBeProcessed {
                     job_type_suffix, self.file_path, output_path
                 );
                 continue;
-            } else if error_path.exists() && !self.retry_aborted {
+            } else if error_path.exists() && !self.options.retry_aborted {
                 info!(
                     "Skipping {:?} job for {:?}: already processed and failed. Error log at {:?}.",
                     job_type_suffix, self.file_path, error_path
@@ -1719,13 +1712,13 @@ impl FileToBeProcessed {
             // Check if each required file exists
             for ext in &extensions {
                 let file_path =
-                    function.get_output_filepath(output_dirpath, &self.func_filename_template, ext);
+                    function.get_output_filepath(output_dirpath, &self.options.func_filename_template, ext);
                 required_files_exist.push(file_path.exists());
             }
 
             let error_path = function.get_output_filepath(
                 output_dirpath,
-                &self.func_filename_template,
+                &self.options.func_filename_template,
                 "error.log",
             );
             let error_exists = error_path.exists();
@@ -1736,7 +1729,7 @@ impl FileToBeProcessed {
             if is_complete {
                 existing_complete_count += 1;
             }
-            if error_exists && !self.retry_aborted {
+            if error_exists && !self.options.retry_aborted {
                 skipped_error_count += 1;
             }
 
@@ -1793,7 +1786,7 @@ impl FileToBeProcessed {
                         n_skipped += 1;
                         continue;
                     }
-                    if status.error_exists && !self.retry_aborted {
+                    if status.error_exists && !self.options.retry_aborted {
                         debug!(
                             "Skipping function {:?} @ {:#x}: previously failed, retry_aborted=false",
                             function.name, function.addr
@@ -1812,7 +1805,7 @@ impl FileToBeProcessed {
                 Err(e) => {
                     let error_path = function.get_output_filepath(
                         output_dirpath,
-                        &self.func_filename_template,
+                        &self.options.func_filename_template,
                         "error.log",
                     );
                     error!(
@@ -1894,7 +1887,7 @@ impl FileToBeProcessed {
                     let result = function.write_cfg_to_json(
                         r2p,
                         &output_dirpath,
-                        &self.func_filename_template,
+                        &self.options.func_filename_template,
                     );
                     if result.is_ok() {
                         debug!(
@@ -1937,7 +1930,7 @@ impl FileToBeProcessed {
 
         for function in function_details {
             let ret = function
-                .get_ghidra_decomp(r2p, self.with_annotations)
+                .get_ghidra_decomp(r2p, self.options.with_annotations)
                 .with_context(|| {
                     format!(
                         "Unable to get decompilation for {:?} @ {:?}",
@@ -2126,7 +2119,7 @@ impl FileToBeProcessed {
                 let result = function.write_to_bin(
                     r2p,
                     output_dirpath,
-                    &self.func_filename_template,
+                    &self.options.func_filename_template,
                     extract_mask,
                 );
                 if result.is_ok() {
@@ -2269,7 +2262,7 @@ impl FileToBeProcessed {
             }
         };
 
-        if let Some(min_blocks) = self.min_basic_blocks {
+        if let Some(min_blocks) = self.options.min_basic_blocks {
             info!(
                 "Filtering functions with less than {} basic blocks",
                 min_blocks
@@ -2287,6 +2280,7 @@ impl FileToBeProcessed {
             .filter(|result| {
                 match result {
                     Ok(func) => self
+                        .options
                         .min_basic_blocks
                         .is_none_or(|min_blocks| func.nblocks >= min_blocks as u64),
                     Err(_) => true, // Keep errors so they propagate through collect()

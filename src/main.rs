@@ -364,6 +364,13 @@ enum Commands {
         /// Filter functions with less than this number of basic blocks (disabled by default)
         #[arg(long)]
         min_basic_blocks: Option<u16>,
+
+        /// Allow streaming output folders into TAR archives or JSONL files
+        /// instead of individual files (for more efficient storage and processing of large corpora
+        #[arg(long, default_value = "false")]
+        bytes_to_tar: bool,
+        #[arg(long, default_value = "false")]
+        func_cfg_to_json: bool,
     },
     /// Generate single embeddings on the fly
     ///
@@ -1148,6 +1155,8 @@ fn main() {
             with_annotations,
             retry_aborted,
             min_basic_blocks,
+            bytes_to_tar,
+            func_cfg_to_json,
         } => {
             info!("Creating extraction job with {} modes", modes.len());
             if !output_dir.exists() {
@@ -1174,6 +1183,8 @@ fn main() {
                 retry_aborted: *retry_aborted,
                 func_filename_template: func_filename.to_string(),
                 min_basic_blocks: *min_basic_blocks,
+                bytes_to_tar: *bytes_to_tar,
+                func_cfg_to_json: *func_cfg_to_json,
             };
 
             let r2_handle_config = R2PipeConfig {
