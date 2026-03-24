@@ -80,9 +80,7 @@ pub fn get_save_file_path(
 /// This function validates the function filename template to ensure it is a valid template.
 /// The template must be a string containing `{symbol}` or `{address}`.
 pub fn validate_func_filename(s: &str) -> Result<String, String> {
-    if s == "symbol" || s == "address" {
-        Ok(s.to_string())
-    } else if s.contains("{symbol}") || s.contains("{address}") {
+    if s == "symbol" || s == "address" || s.contains("{symbol}") || s.contains("{address}") {
         Ok(s.to_string())
     } else {
         Err(
@@ -184,7 +182,7 @@ mod tests {
         let output_path: &PathBuf = &PathBuf::from("processed_data/");
         let output_path = get_save_file_path(
             path,
-            &output_path,
+            output_path,
             Some(".json".to_string()),
             Some("cg".to_string()),
             None,
@@ -202,7 +200,7 @@ mod tests {
     fn test_get_save_file_path_3() {
         let path: &PathBuf = &PathBuf::from("hello.json");
         let output_path: &PathBuf = &PathBuf::from("processed_data");
-        let output = get_save_file_path(path, &output_path, None, None, None);
+        let output = get_save_file_path(path, output_path, None, None, None);
         assert_eq!(output, PathBuf::from("processed_data/hello"))
     }
 
@@ -212,7 +210,7 @@ mod tests {
         let output_path: &PathBuf = &PathBuf::from("processed_data");
         let output = get_save_file_path(
             path,
-            &output_path,
+            output_path,
             Some(".json".to_string()),
             Some("gcg".to_string()),
             Some("_cg".to_string()),

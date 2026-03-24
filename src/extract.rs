@@ -115,6 +115,13 @@ pub struct FunctionToBeProcessed {
     pub nblocks: u64,
 }
 
+pub struct ExtractionOptions {
+    pub retry_aborted: bool,
+    pub with_annotations: bool,
+    pub min_basic_blocks: Option<u16>,
+    pub func_filename_template: String,
+}
+
 #[derive(Debug)]
 pub struct ExtractionJob {
     pub input_path: PathBuf,
@@ -626,16 +633,8 @@ impl ExtractionJob {
         input_path: &PathBuf,
         output_path: &PathBuf,
         modes: &Vec<String>,
-        debug: &bool,
-        analysis_mode: &str,
-        use_curl_pdb: &bool,
-        apply_relocations: &bool,
-        disable_pseudo_asm: &bool,
-        func_filename_template: &str,
-        timeout: &Option<u64>,
-        with_annotations: &bool,
-        retry_aborted: &bool,
-        min_basic_blocks: &Option<u16>,
+        r2_handle_config: R2PipeConfig,
+        extraction_options: ExtractionOptions,
     ) -> Result<ExtractionJob, Error> {
         let mut job_types = vec![];
         let mut extraction_job_types = vec![];
@@ -654,34 +653,18 @@ impl ExtractionJob {
         }
 
         // Warn the user if mode-specific flags are turned on for no reason
-        if !extraction_job_types.contains(&ExtractionJobType::Decompilation) && *with_annotations {
+        if !extraction_job_types.contains(&ExtractionJobType::Decompilation) && extraction_options.with_annotations {
             let mode = ExtractionJob::get_job_type_suffix(&ExtractionJobType::Decompilation);
             warn!(
                 "Annotations are only supported for decompilation extraction (mode: {})",
                 mode
             );
         }
-        if !extraction_job_types.contains(&ExtractionJobType::FunctionBytesMasked) {
-            let mode = ExtractionJob::get_job_type_suffix(&ExtractionJobType::FunctionBytesMasked);
-            warn!(
-                "Keep raw bytes is only supported for masked bytes extraction (mode: {})",
-                mode
-            );
-        }
-
-        let r2_handle_config = R2PipeConfig {
-            debug: *debug,
-            analysis_mode: analysis_mode.to_string(),
-            apply_relocations: *apply_relocations,
-            disable_pseudo_asm: *disable_pseudo_asm,
-            use_curl_pdb: *use_curl_pdb,
-            timeout: *timeout,
-        };
 
         // Check if any of the job types requires the function list
         let needs_func_list = extraction_job_types
             .iter()
-            .any(|jt| Self::job_type_needs_function_list(jt));
+            .any(Self::job_type_needs_function_list);
 
         let p_type = Self::get_path_type(input_path);
         match p_type {
@@ -693,11 +676,11 @@ impl ExtractionJob {
                     output_path: output_path.to_owned(),
                     job_types: extraction_job_types, // Use the vector of just ExtractionJobType
                     r2p_config: r2_handle_config,
-                    with_annotations: *with_annotations,
-                    retry_aborted: *retry_aborted,
-                    func_filename_template: func_filename_template.to_string(),
+                    with_annotations: extraction_options.with_annotations,
+                    retry_aborted: extraction_options.retry_aborted,
+                    func_filename_template: extraction_options.func_filename_template.to_string(),
                     function_list: OnceCell::new(),
-                    min_basic_blocks: *min_basic_blocks,
+                    min_basic_blocks: extraction_options.min_basic_blocks,
                     needs_func_list,
                 };
 
@@ -728,11 +711,11 @@ impl ExtractionJob {
                         output_path: output_path.to_owned(),
                         job_types: extraction_job_types.clone(),
                         r2p_config: r2_handle_config.clone(),
-                        with_annotations: *with_annotations,
-                        retry_aborted: *retry_aborted,
-                        func_filename_template: func_filename_template.to_string(),
+                        with_annotations: extraction_options.with_annotations,
+                        retry_aborted: extraction_options.retry_aborted,
+                        func_filename_template: extraction_options.func_filename_template.to_string(),
                         function_list: OnceCell::new(),
-                        min_basic_blocks: *min_basic_blocks,
+                        min_basic_blocks: extraction_options.min_basic_blocks,
                         needs_func_list,
                     })
                     .collect();
@@ -861,12 +844,11 @@ impl FunctionToBeProcessed {
             .get_bytes(r2p, extract_mask)
             .map_err(|e| anyhow::anyhow!("Failed to get bytes: {}", e))?;
 
-        // Store the function raw bytes 
+        // Store the function raw bytes
         // Setup output filepaths for function bytes
         let bytes_ext =
             FunctionToBeProcessed::get_function_file_ext(&ExtractionJobType::FunctionBytes);
-        let bytes_filepath =
-            self.get_output_filepath(output_dirpath, filename_template, bytes_ext);
+        let bytes_filepath = self.get_output_filepath(output_dirpath, filename_template, bytes_ext);
 
         debug!("Writing function bytes to file: {:?}", bytes_filepath);
         std::fs::write(&bytes_filepath, &bytes).with_context(|| {
@@ -965,7 +947,7 @@ impl FunctionToBeProcessed {
         };
 
         func_filename = sanitize_filename(&func_filename);
-        if ["symbol", "address"].contains(&template) && ext != "" {
+        if ["symbol", "address"].contains(&template) && !ext.is_empty() {
             // Add an extension only if the user did not specify a custom template
             // and the ext string is not empty
             func_filename = func_filename + "." + ext;
@@ -1001,7 +983,7 @@ impl FunctionToBeProcessed {
         let afij = r2p.cmdj(&format!("afij @ {}", func_addr))?;
         let fobj = afij
             .as_array()
-            .and_then(|a| a.get(0))
+            .and_then(|a| a.first())
             .ok_or_else(|| anyhow::anyhow!("`afij` returned no function at 0x{:x}", func_addr))?;
 
         let func_base = fobj
@@ -1267,7 +1249,7 @@ impl FunctionToBeProcessed {
         // AGFJ returns an array of JSON objects, it should only ever be length 1
         let cfg: Vec<AGFJFunc> = serde_json::from_value(json.clone())
             .with_context(|| format!("Unable to convert {:?} to AGFJFunc struct!", json))?;
-        if cfg.len() == 0 {
+        if cfg.is_empty() {
             return Err(anyhow!("No CFG found for function @ {}", self.addr));
         } else if cfg.len() > 1 {
             warn!(
@@ -1321,7 +1303,7 @@ impl FileToBeProcessed {
         // Remove everything after the suffix in the output filename
         output_filename = output_filename.split(&suffix).next().unwrap().to_string();
         output_filename = output_filename + &suffix_with_ext;
-        let mut error_filepath = PathBuf::from(self.output_path.clone());
+        let mut error_filepath = self.output_path.clone();
         error_filepath.push(output_filename);
 
         Ok(error_filepath)
@@ -1330,7 +1312,7 @@ impl FileToBeProcessed {
     /// Returns the path where the output data for a given job type should be stored
     fn get_output_filepath(&self, job_type_suffix: &str) -> Result<PathBuf> {
         let output_filename = self.get_output_filename(job_type_suffix)?;
-        let mut output_filepath = PathBuf::from(self.output_path.clone());
+        let mut output_filepath = self.output_path.clone();
         output_filepath.push(output_filename);
         Ok(output_filepath)
     }
@@ -1340,7 +1322,7 @@ impl FileToBeProcessed {
             .get_output_filepath(job_type_suffix)?
             .to_string_lossy()
             .to_string();
-        filepath_str = filepath_str + ".part";
+        filepath_str += ".part";
         let output_filepath = PathBuf::from(filepath_str.clone());
         Ok(output_filepath)
     }
@@ -1410,7 +1392,7 @@ impl FileToBeProcessed {
         let file = File::create(index_path)?;
         let mut writer = csv::Writer::from_writer(file);
         // Write header
-        writer.write_record(&[
+        writer.write_record([
             "name",
             "address",
             "size",
@@ -1423,7 +1405,7 @@ impl FileToBeProcessed {
         for function in functions {
             let output_path =
                 function.get_output_filepath(output_dirpath, &self.func_filename_template, ext);
-            writer.write_record(&[
+            writer.write_record([
                 &function.name,
                 &function.addr.to_string(),
                 &function.size.to_string(),
@@ -1723,7 +1705,7 @@ impl FileToBeProcessed {
         // Get extensions for all job types
         let extensions: Vec<&str> = job_types
             .iter()
-            .map(|jt| FunctionToBeProcessed::get_function_file_ext(jt))
+            .map(FunctionToBeProcessed::get_function_file_ext)
             .collect();
 
         let mut file_statuses: Vec<FileStatus> = Vec::with_capacity(functions_count);
@@ -2007,7 +1989,7 @@ impl FileToBeProcessed {
             let mut bb_pcode: Vec<PCodeJsonWithBB> = Vec::new();
             for bb in bb_info.iter() {
                 let ret = self
-                    .get_ghidra_pcode(bb.addr, bb.ninstr.try_into().unwrap(), r2p)
+                    .get_ghidra_pcode(bb.addr, bb.ninstr, r2p)
                     .with_context(|| {
                         format!(
                             "Basic block decompilation failed in {:?} at offset {:?}",
@@ -2099,22 +2081,22 @@ impl FileToBeProcessed {
         let file_name = self.get_file_name()?;
         let functions = self.get_function_list(r2p)?;
         if !output_dirpath.is_dir() {
-            std::fs::create_dir_all(&output_dirpath)
+            std::fs::create_dir_all(output_dirpath)
                 .with_context(|| format!("Failed to create directory {:?}", output_dirpath))?;
         }
 
         // Write index for the raw bytes
         self.write_function_index(
             &functions.to_vec(),
-            &output_dirpath,
+            output_dirpath,
             ExtractionJobType::FunctionBytes,
         )?;
-    
+
         if extract_mask {
             // Write index for the function bytes masks
             self.write_function_index(
                 &functions.to_vec(),
-                &output_dirpath,
+                output_dirpath,
                 ExtractionJobType::FunctionBytesMasked,
             )?;
         }
@@ -2145,7 +2127,7 @@ impl FileToBeProcessed {
                     r2p,
                     output_dirpath,
                     &self.func_filename_template,
-                    extract_mask
+                    extract_mask,
                 );
                 if result.is_ok() {
                     debug!(
@@ -2306,7 +2288,7 @@ impl FileToBeProcessed {
                 match result {
                     Ok(func) => self
                         .min_basic_blocks
-                        .map_or(true, |min_blocks| func.nblocks >= min_blocks as u64),
+                        .is_none_or(|min_blocks| func.nblocks >= min_blocks as u64),
                     Err(_) => true, // Keep errors so they propagate through collect()
                 }
             })
@@ -2330,7 +2312,7 @@ impl FileToBeProcessed {
     /// Write a JSON object to a file
     fn write_to_json(&self, json_obj: &Value, output_filepath: &PathBuf) -> Result<()> {
         info!("Writing JSON to {:?}", output_filepath);
-        let file = File::create(&output_filepath)
+        let file = File::create(output_filepath)
             .with_context(|| format!("Unable to create file {:?}", output_filepath))?;
         // Using a buffered writer to handle potentially huge JSON objects
         let writer = BufWriter::new(file);
@@ -2507,10 +2489,7 @@ impl FileToBeProcessed {
 
     fn is_r2_pipe_alive(&self, r2p: &mut R2Pipe) -> bool {
         // Check if we can get the version
-        match r2p.cmd("?V") {
-            Ok(_) => true,   // The R2Pipe is alive
-            Err(_) => false, // The R2Pipe is dead
-        }
+        r2p.cmd("?V").is_ok()
     }
 
     fn ensure_r2_pipe(&self, maybe_r2p: Option<R2Pipe>, max_attempts: u16) -> Result<R2Pipe> {

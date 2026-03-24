@@ -355,7 +355,7 @@ impl PCodeFile {
             let nx_graph = NetworkxDiGraph::from((&graph, pcode_json_with_bb, &start_addrs));
             let mut file_out_path =
                 get_save_file_path(&self.filename, &self.output_path, None, None, None);
-            file_out_path.push(&format!("{}_pcode_cfg.json", &function_name));
+            file_out_path.push(format!("{}_pcode_cfg.json", &function_name));
 
             if !file_out_path.parent().unwrap().exists() {
                 std::fs::create_dir_all(file_out_path.parent().unwrap()).unwrap();
@@ -460,12 +460,12 @@ mod tests {
         // Check generic features
         assert_eq!(graph.node_count(), 9);
         assert_eq!(graph.edge_count(), 11);
-        assert_eq!(graph.is_directed(), true);
+        assert!(graph.is_directed());
 
         // Check structure
 
         // Outgoing Edges from Nodes
-        let expected_outgoing_edges = vec![2, 1, 1, 2, 1, 2, 0, 1, 1];
+        let expected_outgoing_edges = [2, 1, 1, 2, 1, 2, 0, 1, 1];
         for (idx, _) in start_addrs.iter().enumerate() {
             let outgoing_edges = graph
                 .edges_directed(NodeIndex::from(idx as u32), Outgoing)
@@ -473,7 +473,7 @@ mod tests {
             assert_eq!(expected_outgoing_edges[idx], outgoing_edges);
         }
         // Incoming Edges to Nodes
-        let expected_incoming_edges = vec![0, 1, 1, 2, 1, 1, 3, 1, 1];
+        let expected_incoming_edges = [0, 1, 1, 2, 1, 1, 3, 1, 1];
         for (idx, _) in start_addrs.iter().enumerate() {
             let outgoing_edges = graph
                 .edges_directed(NodeIndex::from(idx as u32), Incoming)
@@ -493,7 +493,7 @@ mod tests {
 
         // Check saving
         let save_ret = nx_graph.save_to_json("test_pcode_graph.json").is_ok();
-        assert_eq!(save_ret, true);
+        assert!(save_ret);
         std::fs::remove_file("test_pcode_graph.json").unwrap()
     }
 }

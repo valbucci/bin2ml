@@ -624,7 +624,7 @@ mod tests {
         // CG Corpus Generation
         let corpus = CGCorpus::new(
             &PathBuf::from("test-files/cg_dedup/to_dedup"),
-            &mut PathBuf::from("test-files/cg_dedup/deduped"),
+            &PathBuf::from("test-files/cg_dedup/deduped"),
             &"cisco".to_string(),
             CallGraphNodeFeatureType::CGName,
         );
@@ -706,7 +706,7 @@ mod tests {
     fn test_get_unique_binary_fps() {
         let corpus = CGCorpus::new(
             &PathBuf::from("test-files/cg_dedup/to_dedup"),
-            &mut PathBuf::from("test-files/cg_dedup/deduped"),
+            &PathBuf::from("test-files/cg_dedup/deduped"),
             &"cisco".to_string(),
             CallGraphNodeFeatureType::CGMeta,
         )
@@ -729,7 +729,7 @@ mod tests {
     fn test_processing_unique_binary_collection() {
         let corpus = CGCorpus::new(
             &PathBuf::from("test-files/cg_dedup/to_dedup"),
-            &mut PathBuf::from("test-files/cg_dedup/deduped"),
+            &PathBuf::from("test-files/cg_dedup/deduped"),
             &"cisco".to_string(),
             CallGraphNodeFeatureType::CGMeta,
         )
@@ -754,7 +754,7 @@ mod tests {
     fn test_dedup_binary_subset() {
         let corpus = CGCorpus::new(
             &PathBuf::from("test-files/cg_dedup/to_dedup"),
-            &mut PathBuf::from("test-files/cg_dedup/deduped"),
+            &PathBuf::from("test-files/cg_dedup/deduped"),
             &"cisco".to_string(),
             CallGraphNodeFeatureType::CGMeta,
         )

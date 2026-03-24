@@ -372,7 +372,7 @@ pub const X86_COMPARE: [&str; 23] = [
 
 // ARM
 
-pub const ARM_ARITHMETIC: [&str; 2048] = [
+pub static ARM_ARITHMETIC: [&str; 2048] = [
     "sub",
     "subeq",
     "subne",

@@ -54,7 +54,7 @@ use crate::validate::validate_input;
 use bb::{FeatureType, InstructionMode};
 #[cfg(feature = "goblin")]
 use binnfo::goblin_info;
-use extract::{ExtractionJob, PathType};
+use extract::{ExtractionJob, PathType, ExtractionOptions, R2PipeConfig};
 use files::{AGFJFile, FormatMode};
 #[cfg(feature = "inference")]
 use inference::inference;
@@ -1169,21 +1169,29 @@ fn main() {
                 analysis_mode = "aa";
             }
 
+            let extraction_options = ExtractionOptions {
+                with_annotations: *with_annotations,
+                retry_aborted: *retry_aborted,
+                func_filename_template: func_filename.to_string(),
+                min_basic_blocks: *min_basic_blocks,
+            };
+
+            let r2_handle_config = R2PipeConfig {
+                debug: *debug,
+                analysis_mode: analysis_mode.to_string(),
+                apply_relocations: *apply_relocations,
+                disable_pseudo_asm: *disable_pseudo_asm,
+                use_curl_pdb: *use_curl_pdb,
+                timeout: *timeout,
+            };
+
             // Create a single extraction job with all modes
             let job = ExtractionJob::new(
                 fpath,
                 output_dir,
                 modes,
-                debug,
-                analysis_mode,
-                use_curl_pdb,
-                apply_relocations,
-                disable_pseudo_asm,
-                func_filename,
-                timeout,
-                with_annotations,
-                retry_aborted,
-                min_basic_blocks,
+                r2_handle_config,
+                extraction_options
             )
             .unwrap_or_else(|e| {
                 error!("Failed to create extraction job: {}", e);
