@@ -48,7 +48,8 @@ pub enum ExtractionJobType {
     RegisterBehaviour,
     FunctionXrefs,
     CFG,
-    FunctionCFG, // Like CFG, but in a separate file for each function
+    FunctionCFG, // Like CFG, but extracts a separate file for each function 
+                 // - slower extraction but more stable for large files.
     CallGraphs,
     FuncInfo,
     FunctionVariables,
@@ -57,8 +58,9 @@ pub enum ExtractionJobType {
     PCodeBB,
     LocalVariableXrefs,
     GlobalStrings,
-    FunctionBytes,
-    FunctionBytesMasked,
+    FunctionBytes, // Extracts raw function bytes to folder with separate files for each function
+    FunctionBytesMasked, // Like FunctionBytes but extracts bit-level bytes mask too
+                         // - [!] Very slow for large functions
     FunctionZignatures,
 }
 
@@ -1269,7 +1271,20 @@ impl FileToBeProcessed {
     fn get_output_filename(&self, job_type_suffix: &str) -> Result<String> {
         let job_type = ExtractionJob::extraction_job_matcher(job_type_suffix)
             .context(format!("Incorrect job type suffix: {}", job_type_suffix))?;
-        let ext = ExtractionJob::get_output_extension(&job_type);
+        
+        // Dynamic output extension logic based on job_type and data_grouped option
+        let ext = match job_type {
+            ExtractionJobType::FunctionBytes | ExtractionJobType::FunctionBytesMasked => {
+                // If grouped it's a TAR archive (tar), otherwise a directory (None)
+                if self.options.data_grouped { Some("tar") } else { None }
+            },
+            ExtractionJobType::FunctionCFG => {
+                // If grouped it's a JSON Lines file (jsonl), otherwise a directory (None)
+                if self.options.data_grouped { Some("jsonl") } else { None }
+            },
+            _ => ExtractionJob::get_output_extension(&job_type) // fallback to static extensions
+        };
+        
         let ext_str = ext.map_or("".to_string(), |e| format!(".{}", e));
         let mut output_filename = self.get_file_name()?;
 
@@ -1335,8 +1350,10 @@ impl FileToBeProcessed {
                 self.extract_register_behaviour(r2p, &tmp_output_path)
             }
             ExtractionJobType::FunctionXrefs => self.extract_function_xrefs(r2p, &tmp_output_path),
+
             ExtractionJobType::CFG => self.extract_func_cfgs(r2p, &tmp_output_path, false),
             ExtractionJobType::FunctionCFG => self.extract_func_cfgs(r2p, &tmp_output_path, true),
+
             ExtractionJobType::CallGraphs => {
                 self.extract_function_call_graphs(r2p, &tmp_output_path)
             }
@@ -1474,6 +1491,38 @@ impl FileToBeProcessed {
                 );
                 continue;
             }
+
+            // Avoid using R2Pipe if the data is already cached in an unpacked format
+            if self.options.data_grouped {
+                // Determine what the directory would be called without the .tar or .jsonl extension
+                let cache_dir = output_path.with_extension("");
+                
+                if cache_dir.is_dir() {
+                    info!("Found existing unpacked directory at {:?}. Packaging directly without R2Pipe...", cache_dir);
+                    
+                    // [i] We only have TAR implemented right now, but this prepares us 
+                    //     for JSONL and other formats in the future
+                    if output_path.extension().and_then(|e| e.to_str()) == Some("tar") {
+                        match self.archive_directory_to_tar(&cache_dir, &output_path) {
+                            Ok(_) => {
+                                info!("Successfully archived existing directory to {:?}", output_path);
+                                // Clean up the old directory to save space
+                                // TODO: could implement ExtractionOption to disable this
+                                //       if users want to keep the unpacked data
+                                if let Err(e) = std::fs::remove_dir_all(&cache_dir) {
+                                    warn!("Failed to remove cache directory {:?}: {}", cache_dir, e);
+                                }
+                                continue; // Skip R2Pipe analysis and extraction entirely!
+                            },
+                            Err(e) => {
+                                error!("Failed to archive existing directory: {}", e);
+                                // Fall through to normal extraction if archiving fails
+                            }
+                        }
+                    }
+                }
+            }
+
 
             // Lazily initialize r2p if not already done.
             maybe_r2p = match self.ensure_r2_pipe(maybe_r2p, 5) {
@@ -1680,10 +1729,10 @@ impl FileToBeProcessed {
         r2p: &mut R2Pipe,
         output_dirpath: &PathBuf,
         job_types: &[ExtractionJobType],
-        extraction_fn: F,
+        mut extraction_fn: F,
     ) -> Result<()>
     where
-        F: Fn(&FunctionToBeProcessed, &mut R2Pipe, usize) -> Result<()>,
+        F: FnMut(&FunctionToBeProcessed, &mut R2Pipe, usize) -> Result<()>,
     {
         let function_list = self.get_function_list(r2p)?.to_vec();
         let functions_count = function_list.len();
@@ -2073,50 +2122,91 @@ impl FileToBeProcessed {
     pub fn extract_function_bytes(
         &self,
         r2p: &mut R2Pipe,
-        output_dirpath: &PathBuf,
+        output_path: &PathBuf,
         extract_mask: bool,
     ) -> Result<()> {
         info!("Starting function bytes extraction");
 
         let file_name = self.get_file_name()?;
         let functions = self.get_function_list(r2p)?;
-        if !output_dirpath.is_dir() {
-            std::fs::create_dir_all(output_dirpath)
-                .with_context(|| format!("Failed to create directory {:?}", output_dirpath))?;
+        
+        // Define working directory:
+        // - If data_grouped enabled: extract to a temporary directory first to preserve
+        //                            resume capabilities then archive it in the end
+        // - Else: directly extract to the output directory since files are 
+        //         separate and can be resumed individually
+        let working_dir = if self.options.data_grouped {
+            // If data is grouped output_path should look like:
+            // - `file-name_bytes.tar.part``
+            // We want to change this to:
+            // - `file-name_bytes.part` so we can reuse existing cache if extraction
+            //   was already run without the data_grouped flag enabled.
+            let complete_path = output_path
+            .with_extension("") // removes .part extension
+            .with_extension(""); // removes .tar extension
+            let partial_path = complete_path.with_extension("part");
+
+            // Check if extraction was already complete
+            if complete_path.is_dir() {
+                // Extraction was already complete use existing directory
+                debug!("Using existing extracted directory at {:?} since data_grouped=true and directory already exists", complete_path);
+                complete_path.clone()
+            } else if partial_path.is_dir() {
+                // Extraction was not complete, but a partial directory exists. Use it to resume extraction.
+                debug!("Using existing partially extracted directory at {:?} since data_grouped=true and partial directory already exists", partial_path);
+                partial_path.clone()
+            } else {
+                // No existing directory found, create partial path for new extraction
+                partial_path.clone()
+            }
+        } else {
+            // If data is not grouped, we can directly extract to the output directory since files are separate and can be resumed individually
+            output_path.clone()
+        };
+
+        // Create working directory
+        if !working_dir.is_dir() {
+            std::fs::create_dir_all(&working_dir)
+                .with_context(|| format!("Failed to create directory {:?}", working_dir))?;
         }
 
-        // Write index for the raw bytes
+        // Write indexes to the working directory
+        // - Write index for the raw bytes
         self.write_function_index(
             &functions.to_vec(),
-            output_dirpath,
+            &working_dir,
             ExtractionJobType::FunctionBytes,
         )?;
 
         if extract_mask {
-            // Write index for the function bytes masks
+            // - Write index for the function bytes masks
             self.write_function_index(
                 &functions.to_vec(),
-                output_dirpath,
+                &working_dir,
                 ExtractionJobType::FunctionBytesMasked,
             )?;
         }
 
-        // Store extracted job types to determine extracted files' extension
-        // later down the line
+        // Define job types
         let write_mask = extract_mask;
         let job_types: Vec<ExtractionJobType> = if write_mask {
+            // Extract both the raw bytes and the mask
             vec![
                 ExtractionJobType::FunctionBytes,
                 ExtractionJobType::FunctionBytesMasked,
             ]
         } else {
+            // Only extract the raw bytes
             vec![ExtractionJobType::FunctionBytes]
         };
 
-        // Use centralized extraction with resume capability
+        // Extract functions with resume logic:
+        // - skip function files that already exist, 
+        // - log errors to separate files, and 
+        // - keep track of aggregate stats
         self.extract_functions_with_resume(
             r2p,
-            output_dirpath,
+            &working_dir,
             &job_types,
             |function, r2p, _index| {
                 debug!(
@@ -2125,7 +2215,7 @@ impl FileToBeProcessed {
                 );
                 let result = function.write_to_bin(
                     r2p,
-                    output_dirpath,
+                    &working_dir,
                     &self.options.func_filename_template,
                     extract_mask,
                 );
@@ -2138,6 +2228,15 @@ impl FileToBeProcessed {
                 result
             },
         )?;
+
+        // If grouping is enabled package bytes data into flat TAR
+        if self.options.data_grouped {
+            info!("Archiving extracted bytes to {:?}", output_path);
+            self.archive_directory_to_tar(&working_dir, output_path)?;
+            // Clean up the temporary directory
+            std::fs::remove_dir_all(&working_dir)
+                .with_context(|| format!("Failed to remove temporary directory {:?}", working_dir))?;
+        }
 
         info!(
             "Finished extracting bytes for each function of {:?}",
@@ -2365,6 +2464,31 @@ impl FileToBeProcessed {
 
         seq.end()?;
         info!("JSON stream written to {:?}", output_filepath);
+        Ok(())
+    }
+
+    /// Creates a flat TAR archive from a directory
+    fn archive_directory_to_tar(&self, src_dir: &PathBuf, target_tar: &PathBuf) -> Result<()> {
+        let tar_file = std::fs::File::create(target_tar)
+            .with_context(|| format!("Failed to create tar file {:?}", target_tar))?;
+        let mut tar_builder = tar::Builder::new(tar_file);
+        
+        // Append the contents of working_dir into the root of the TAR
+        for entry in std::fs::read_dir(src_dir)
+            .with_context(|| format!("Failed to read working directory {:?}", src_dir))? 
+        {
+            let entry = entry.with_context(|| "Failed to read directory entry")?;
+            let path = entry.path();
+            if path.is_file() {
+                let file_name = path.file_name().context("Failed to extract file name")?;
+                tar_builder.append_path_with_name(&path, file_name)
+                    .with_context(|| format!("Failed to append file {:?} to tar", path))?;
+            }
+        }
+
+        tar_builder.into_inner()
+            .with_context(|| "Failed to finish writing TAR archive")?;
+            
         Ok(())
     }
 
