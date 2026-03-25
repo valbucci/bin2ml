@@ -28,7 +28,7 @@ use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::fs::File;
-use std::io::{BufReader, BufWriter, Read};
+use std::io::{BufReader, BufWriter, Read, Write};
 use std::path::PathBuf;
 use std::string::String;
 use std::sync::LazyLock;
@@ -1508,30 +1508,46 @@ impl FileToBeProcessed {
                 if cache_dir.is_dir() {
                     info!("Found existing unpacked directory at {:?}. Packaging directly without R2Pipe...", cache_dir);
 
-                    // [i] We only have TAR implemented right now, but this prepares us
-                    //     for JSONL and other formats in the future
-                    if output_path.extension().and_then(|e| e.to_str()) == Some("tar") {
-                        match self.archive_directory_to_tar(&cache_dir, &output_path) {
-                            Ok(_) => {
-                                info!(
-                                    "Successfully archived existing directory to {:?}",
-                                    output_path
-                                );
-                                // Clean up the old directory to save space
-                                // TODO: could implement ExtractionOption to disable this
-                                //       if users want to keep the unpacked data
-                                if let Err(e) = std::fs::remove_dir_all(&cache_dir) {
-                                    warn!(
-                                        "Failed to remove cache directory {:?}: {}",
-                                        cache_dir, e
-                                    );
+                    // [i] We only have TAR and JSONL implemented right now, but this
+                    //     prepares us for other formats in the future
+                    let ext = output_path.extension().and_then(|e| e.to_str());
+                    let package_result = 
+                    if ext == Some("tar") {
+                        self.archive_directory_to_tar(&cache_dir, &output_path)
+                    } else if ext == Some("jsonl") {
+                        self.combine_jsons_to_jsonl(&cache_dir, &output_path, &job_type_suffix)
+                    } else {
+                        warn!("No packaging method for extension {:?}, skipping packaging step.", ext);
+                        Ok(()) // Should never hit this based on our get_output_filename logic
+                    };
+
+                    match package_result {
+                        Ok(_) => {
+                            info!("Successfully packaged existing directory to {:?}", output_path);
+
+                            // [i] For JSONL outputs we preserve the function index CSV
+                            //     for consistent ordering and more efficient lookups.
+                            if ext == Some("jsonl") {
+                                let index_src = cache_dir.join(format!("00-func-index_{}.csv", job_type_suffix));
+                                let index_dest = output_path.with_extension("index.csv");
+                                if index_src.exists() && std::fs::copy(&index_src, &index_dest).is_ok() {
+                                        info!("Preserved function index at {:?}", index_dest);
+                                } else {
+                                    warn!("Failed to preserve function index for JSONL output: {:?}.", output_path);
                                 }
-                                continue; // Skip R2Pipe analysis and extraction entirely!
+
                             }
-                            Err(e) => {
-                                error!("Failed to archive existing directory: {}", e);
-                                // Fall through to normal extraction if archiving fails
+
+                            // Clean up the old directory to save space
+                            if let Err(e) = std::fs::remove_dir_all(&cache_dir) {
+                                warn!("Failed to remove cache directory {:?}: {}", cache_dir, e);
                             }
+                            continue; // Skip R2Pipe extraction since we already have the
+                                      // data packaged up
+                        },
+                        Err(e) => {
+                            error!("Failed to package existing directory: {}", e);
+                            // Fall through to normal extraction if archiving fails
                         }
                     }
                 }
@@ -1928,25 +1944,35 @@ impl FileToBeProcessed {
             // CFGs stored in a separate JSON file for each function
             info!("Extracting CFGs for each function of {:?}", self.file_path);
 
-            // The output path is a directory, create it if it doesn't exist
-            let output_dirpath = output_path.clone();
-            if !output_dirpath.is_dir() {
-                std::fs::create_dir_all(&output_dirpath)
-                    .with_context(|| format!("Failed to create directory {:?}", output_dirpath))?;
+            // Setup the working directory
+            let working_dir = if self.options.data_grouped {
+                // Output path will be like: bin-name_func-cfg.jsonl.part
+                // Strip .jsonl to get the directory name
+                output_path
+                .with_extension("") // Removes the .part extension first
+                .with_extension("part") // Replaces the .jsonl extension with .part
+            } else {
+                // If not grouped, we can extract directly into the output directory
+                output_path.clone()
+            };
+            
+            if !working_dir.is_dir() {
+                std::fs::create_dir_all(&working_dir)
+                    .with_context(|| format!("Failed to create directory {:?}", working_dir))?;
             }
 
-            // Write index for the CFGs (need to get function_list first)
+            // Write index for the CFGs
             let function_list = self.get_function_list(r2p)?.to_vec();
             self.write_function_index(
                 &function_list,
-                &output_dirpath,
+                &working_dir,
                 ExtractionJobType::FunctionCFG,
             )?;
 
             // Use centralized extraction with resume capability
             self.extract_functions_with_resume(
                 r2p,
-                &output_dirpath,
+                &working_dir,
                 &[ExtractionJobType::FunctionCFG],
                 |function, r2p, _index| {
                     debug!(
@@ -1955,7 +1981,7 @@ impl FileToBeProcessed {
                     );
                     let result = function.write_cfg_to_json(
                         r2p,
-                        &output_dirpath,
+                        &working_dir,
                         &self.options.func_filename_template,
                     );
                     if result.is_ok() {
@@ -1967,6 +1993,33 @@ impl FileToBeProcessed {
                     result
                 },
             )?;
+
+            // Package into JSONL if grouping is enabled
+            let job_type_suffix = ExtractionJob::get_job_type_suffix(&ExtractionJobType::FunctionCFG);
+            if self.options.data_grouped {
+                info!("Combining extracted CFGs into JSONL at {:?}", output_path);
+                self.combine_jsons_to_jsonl(&working_dir, output_path, &job_type_suffix).with_context(|| {
+                    format!("Failed to package CFGs into JSONL from {:?}", working_dir)
+                })?;
+
+                // Preserve the index
+                let index_src = working_dir.join(format!("00-func-index_{}.csv", job_type_suffix));
+                // Creates `bin-name_func-cfg.index.csv` right next to the `.jsonl` file
+                let index_dest = output_path.with_extension("index.csv"); 
+                if index_src.exists() && std::fs::copy(&index_src, &index_dest).is_ok() {
+                    info!("Preserved function index at {:?}", index_dest);
+                } else {
+                    warn!("Failed to preserve function index for JSONL output: {:?}.", output_path);
+                }
+
+                // Clean up the temporary directory
+                std::fs::remove_dir_all(&working_dir).with_context(|| {
+                    format!(
+                        "Failed to remove temporary directory {:?} after packaging JSONL",
+                        working_dir
+                    )
+                })?;
+            }
 
             info!(
                 "Finished extracting CFGs for each function of {:?}",
@@ -2505,6 +2558,46 @@ impl FileToBeProcessed {
             .into_inner()
             .with_context(|| "Failed to finish writing TAR archive")?;
 
+        Ok(())
+    }
+
+    // Combines individual JSON files in a directory into a single JSONL file
+    fn combine_jsons_to_jsonl(&self, src_dir: &PathBuf, target_jsonl: &PathBuf, job_type_suffix: &str) -> Result<()> {
+        let jsonl_file = File::create(target_jsonl)
+            .with_context(|| format!("Failed to create jsonl file {:?}", target_jsonl))?;
+        let mut writer = BufWriter::new(jsonl_file);
+
+        // Load function index CSV information for deterministic line ordering
+        let index_path = src_dir.join(format!("00-func-index_{}.csv", job_type_suffix));
+        if !index_path.exists() {
+            return Err(anyhow::anyhow!("Index file missing at {:?}", index_path));
+        }
+        let mut reader = csv::Reader::from_path(&index_path)
+            .with_context(|| format!("Failed to read index CSV {:?}", index_path))?;
+
+        for result in reader.records() {
+            let record = result.context("Failed to read CSV record")?;
+            
+            // "output_path" is at column index 5 in write_function_index
+            if let Some(file_path_str) = record.get(5) {
+                let file_path = PathBuf::from(file_path_str);
+                
+                // Ensure the JSON exists (gracefully skips functions that failed extraction)
+                if file_path.is_file() {
+                    let contents = std::fs::read_to_string(&file_path)
+                        .with_context(|| format!("Failed to read JSON file {:?}", file_path))?;
+                    
+                    let clean_contents = contents.trim();
+                    if !clean_contents.is_empty() {
+                        use std::io::Write; // Ensure Write trait is in scope
+                        writeln!(writer, "{}", clean_contents)
+                            .with_context(|| format!("Failed to write to JSONL {:?}", target_jsonl))?;
+                    }
+                }
+            }
+        }
+        
+        writer.flush().with_context(|| "Failed to flush JSONL writer")?;
         Ok(())
     }
 
