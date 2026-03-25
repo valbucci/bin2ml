@@ -1511,31 +1511,41 @@ impl FileToBeProcessed {
                     // [i] We only have TAR and JSONL implemented right now, but this
                     //     prepares us for other formats in the future
                     let ext = output_path.extension().and_then(|e| e.to_str());
-                    let package_result = 
-                    if ext == Some("tar") {
+                    let package_result = if ext == Some("tar") {
                         self.archive_directory_to_tar(&cache_dir, &output_path)
                     } else if ext == Some("jsonl") {
                         self.combine_jsons_to_jsonl(&cache_dir, &output_path, &job_type_suffix)
                     } else {
-                        warn!("No packaging method for extension {:?}, skipping packaging step.", ext);
+                        warn!(
+                            "No packaging method for extension {:?}, skipping packaging step.",
+                            ext
+                        );
                         Ok(()) // Should never hit this based on our get_output_filename logic
                     };
 
                     match package_result {
                         Ok(_) => {
-                            info!("Successfully packaged existing directory to {:?}", output_path);
+                            info!(
+                                "Successfully packaged existing directory to {:?}",
+                                output_path
+                            );
 
                             // [i] For JSONL outputs we preserve the function index CSV
                             //     for consistent ordering and more efficient lookups.
                             if ext == Some("jsonl") {
-                                let index_src = cache_dir.join(format!("00-func-index_{}.csv", job_type_suffix));
+                                let index_src = cache_dir
+                                    .join(format!("00-func-index_{}.csv", job_type_suffix));
                                 let index_dest = output_path.with_extension("index.csv");
-                                if index_src.exists() && std::fs::copy(&index_src, &index_dest).is_ok() {
-                                        info!("Preserved function index at {:?}", index_dest);
+                                if index_src.exists()
+                                    && std::fs::copy(&index_src, &index_dest).is_ok()
+                                {
+                                    info!("Preserved function index at {:?}", index_dest);
                                 } else {
-                                    warn!("Failed to preserve function index for JSONL output: {:?}.", output_path);
+                                    warn!(
+                                        "Failed to preserve function index for JSONL output: {:?}.",
+                                        output_path
+                                    );
                                 }
-
                             }
 
                             // Clean up the old directory to save space
@@ -1544,7 +1554,7 @@ impl FileToBeProcessed {
                             }
                             continue; // Skip R2Pipe extraction since we already have the
                                       // data packaged up
-                        },
+                        }
                         Err(e) => {
                             error!("Failed to package existing directory: {}", e);
                             // Fall through to normal extraction if archiving fails
@@ -1949,13 +1959,13 @@ impl FileToBeProcessed {
                 // Output path will be like: bin-name_func-cfg.jsonl.part
                 // Strip .jsonl to get the directory name
                 output_path
-                .with_extension("") // Removes the .part extension first
-                .with_extension("part") // Replaces the .jsonl extension with .part
+                    .with_extension("") // Removes the .part extension first
+                    .with_extension("part") // Replaces the .jsonl extension with .part
             } else {
                 // If not grouped, we can extract directly into the output directory
                 output_path.clone()
             };
-            
+
             if !working_dir.is_dir() {
                 std::fs::create_dir_all(&working_dir)
                     .with_context(|| format!("Failed to create directory {:?}", working_dir))?;
@@ -1995,21 +2005,26 @@ impl FileToBeProcessed {
             )?;
 
             // Package into JSONL if grouping is enabled
-            let job_type_suffix = ExtractionJob::get_job_type_suffix(&ExtractionJobType::FunctionCFG);
+            let job_type_suffix =
+                ExtractionJob::get_job_type_suffix(&ExtractionJobType::FunctionCFG);
             if self.options.data_grouped {
                 info!("Combining extracted CFGs into JSONL at {:?}", output_path);
-                self.combine_jsons_to_jsonl(&working_dir, output_path, &job_type_suffix).with_context(|| {
-                    format!("Failed to package CFGs into JSONL from {:?}", working_dir)
-                })?;
+                self.combine_jsons_to_jsonl(&working_dir, output_path, &job_type_suffix)
+                    .with_context(|| {
+                        format!("Failed to package CFGs into JSONL from {:?}", working_dir)
+                    })?;
 
                 // Preserve the index
                 let index_src = working_dir.join(format!("00-func-index_{}.csv", job_type_suffix));
                 // Creates `bin-name_func-cfg.index.csv` right next to the `.jsonl` file
-                let index_dest = output_path.with_extension("index.csv"); 
+                let index_dest = output_path.with_extension("index.csv");
                 if index_src.exists() && std::fs::copy(&index_src, &index_dest).is_ok() {
                     info!("Preserved function index at {:?}", index_dest);
                 } else {
-                    warn!("Failed to preserve function index for JSONL output: {:?}.", output_path);
+                    warn!(
+                        "Failed to preserve function index for JSONL output: {:?}.",
+                        output_path
+                    );
                 }
 
                 // Clean up the temporary directory
@@ -2562,7 +2577,12 @@ impl FileToBeProcessed {
     }
 
     // Combines individual JSON files in a directory into a single JSONL file
-    fn combine_jsons_to_jsonl(&self, src_dir: &PathBuf, target_jsonl: &PathBuf, job_type_suffix: &str) -> Result<()> {
+    fn combine_jsons_to_jsonl(
+        &self,
+        src_dir: &PathBuf,
+        target_jsonl: &PathBuf,
+        job_type_suffix: &str,
+    ) -> Result<()> {
         let jsonl_file = File::create(target_jsonl)
             .with_context(|| format!("Failed to create jsonl file {:?}", target_jsonl))?;
         let mut writer = BufWriter::new(jsonl_file);
@@ -2577,27 +2597,30 @@ impl FileToBeProcessed {
 
         for result in reader.records() {
             let record = result.context("Failed to read CSV record")?;
-            
+
             // "output_path" is at column index 5 in write_function_index
             if let Some(file_path_str) = record.get(5) {
                 let file_path = PathBuf::from(file_path_str);
-                
+
                 // Ensure the JSON exists (gracefully skips functions that failed extraction)
                 if file_path.is_file() {
                     let contents = std::fs::read_to_string(&file_path)
                         .with_context(|| format!("Failed to read JSON file {:?}", file_path))?;
-                    
+
                     let clean_contents = contents.trim();
                     if !clean_contents.is_empty() {
                         use std::io::Write; // Ensure Write trait is in scope
-                        writeln!(writer, "{}", clean_contents)
-                            .with_context(|| format!("Failed to write to JSONL {:?}", target_jsonl))?;
+                        writeln!(writer, "{}", clean_contents).with_context(|| {
+                            format!("Failed to write to JSONL {:?}", target_jsonl)
+                        })?;
                     }
                 }
             }
         }
-        
-        writer.flush().with_context(|| "Failed to flush JSONL writer")?;
+
+        writer
+            .flush()
+            .with_context(|| "Failed to flush JSONL writer")?;
         Ok(())
     }
 
