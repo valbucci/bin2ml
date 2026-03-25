@@ -1502,8 +1502,14 @@ impl FileToBeProcessed {
 
             // Avoid using R2Pipe if the data is already cached in an unpacked format
             if self.options.data_grouped {
-                // Determine what the directory would be called without the .tar or .jsonl extension
-                let cache_dir = output_path.with_extension("");
+                // Safely strip the suffix to preserve dots in the binary name (like libclamav.so.9.0.0)
+                let mut cache_dir_str = output_path.to_string_lossy().to_string();
+                if cache_dir_str.ends_with(".tar") {
+                    cache_dir_str = cache_dir_str.strip_suffix(".tar").unwrap().to_string();
+                } else if cache_dir_str.ends_with(".jsonl") {
+                    cache_dir_str = cache_dir_str.strip_suffix(".jsonl").unwrap().to_string();
+                }
+                let cache_dir = PathBuf::from(&cache_dir_str);
 
                 if cache_dir.is_dir() {
                     info!("Found existing unpacked directory at {:?}. Packaging directly without R2Pipe...", cache_dir);
@@ -1535,7 +1541,9 @@ impl FileToBeProcessed {
                             if ext == Some("jsonl") {
                                 let index_src = cache_dir
                                     .join(format!("00-func-index_{}.csv", job_type_suffix));
-                                let index_dest = output_path.with_extension("index.csv");
+                                let index_dest =
+                                    PathBuf::from(format!("{}.index.csv", cache_dir_str));
+
                                 if index_src.exists()
                                     && std::fs::copy(&index_src, &index_dest).is_ok()
                                 {
@@ -1958,9 +1966,30 @@ impl FileToBeProcessed {
             let working_dir = if self.options.data_grouped {
                 // Output path will be like: bin-name_func-cfg.jsonl.part
                 // Strip .jsonl to get the directory name
-                output_path
-                    .with_extension("") // Removes the .part extension first
-                    .with_extension("part") // Replaces the .jsonl extension with .part
+                let mut output_path_str = output_path.to_string_lossy().to_string();
+                if output_path_str.ends_with(".part") {
+                    // Remove the .part extension first
+                    output_path_str = output_path_str.strip_suffix(".part").unwrap().to_string();
+                }
+
+                if output_path_str.ends_with(".jsonl") {
+                    // Replaces the .jsonl extension with .part
+                    output_path_str = output_path_str.strip_suffix(".jsonl").unwrap().to_string();
+                }
+
+                let complete_path = PathBuf::from(output_path_str.clone());
+                let partial_path = complete_path.with_extension("part");
+
+                if complete_path.exists() {
+                    info!("Found existing complete output directory at {:?}. Skipping extraction and using this cache for packaging.", complete_path);
+                    complete_path
+                } else if partial_path.exists() {
+                    info!("Found existing partial output directory at {:?}. Resuming extraction and writing to this cache.", partial_path);
+                    partial_path
+                } else {
+                    // No existing directory, create a new one with the .part extension
+                    partial_path
+                }
             } else {
                 // If not grouped, we can extract directly into the output directory
                 output_path.clone()
@@ -2017,7 +2046,8 @@ impl FileToBeProcessed {
                 // Preserve the index
                 let index_src = working_dir.join(format!("00-func-index_{}.csv", job_type_suffix));
                 // Creates `bin-name_func-cfg.index.csv` right next to the `.jsonl` file
-                let index_dest = output_path.with_extension("index.csv");
+                let index_dest =
+                    PathBuf::from(format!("{}.index.csv", working_dir.to_string_lossy()));
                 if index_src.exists() && std::fs::copy(&index_src, &index_dest).is_ok() {
                     info!("Preserved function index at {:?}", index_dest);
                 } else {
@@ -2222,15 +2252,23 @@ impl FileToBeProcessed {
             // We want to change this to:
             // - `file-name_bytes.part` so we can reuse existing cache if extraction
             //   was already run without the data_grouped flag enabled.
-            let complete_path = output_path
-                .with_extension("") // removes .part extension
-                .with_extension(""); // removes .tar extension
-            let partial_path = complete_path.with_extension("part");
+            let output_path_str = output_path.to_string_lossy().to_string();
+            let mut complete_path_str = "";
+            if output_path_str.ends_with(".part") {
+                // Remove the .part extension to check for existing complete directory
+                complete_path_str = output_path_str.strip_suffix(".part").unwrap();
+            }
+            if complete_path_str.ends_with(".tar") {
+                // Remove the .tar extension to check for unpacked directory
+                complete_path_str = complete_path_str.strip_suffix(".tar").unwrap();
+            }
+            let complete_path = PathBuf::from(complete_path_str);
+            let partial_path = PathBuf::from(format!("{}.part", complete_path_str));
 
             // Check if extraction was already complete
             if complete_path.is_dir() {
                 // Extraction was already complete use existing directory
-                debug!("Using existing extracted directory at {:?} since data_grouped=true and directory already exists", complete_path);
+                debug!("Using existing extracted directory at {:?} since data_grouped=true and directory already exists", complete_path_str);
                 complete_path.clone()
             } else if partial_path.is_dir() {
                 // Extraction was not complete, but a partial directory exists. Use it to resume extraction.
