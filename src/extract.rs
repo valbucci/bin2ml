@@ -48,8 +48,8 @@ pub enum ExtractionJobType {
     RegisterBehaviour,
     FunctionXrefs,
     CFG,
-    FunctionCFG, // Like CFG, but extracts a separate file for each function 
-                 // - slower extraction but more stable for large files.
+    FunctionCFG, // Like CFG, but extracts a separate file for each function
+    // - slower extraction but more stable for large files.
     CallGraphs,
     FuncInfo,
     FunctionVariables,
@@ -60,7 +60,7 @@ pub enum ExtractionJobType {
     GlobalStrings,
     FunctionBytes, // Extracts raw function bytes to folder with separate files for each function
     FunctionBytesMasked, // Like FunctionBytes but extracts bit-level bytes mask too
-                         // - [!] Very slow for large functions
+    // - [!] Very slow for large functions
     FunctionZignatures,
 }
 
@@ -1271,20 +1271,28 @@ impl FileToBeProcessed {
     fn get_output_filename(&self, job_type_suffix: &str) -> Result<String> {
         let job_type = ExtractionJob::extraction_job_matcher(job_type_suffix)
             .context(format!("Incorrect job type suffix: {}", job_type_suffix))?;
-        
+
         // Dynamic output extension logic based on job_type and data_grouped option
         let ext = match job_type {
             ExtractionJobType::FunctionBytes | ExtractionJobType::FunctionBytesMasked => {
                 // If grouped it's a TAR archive (tar), otherwise a directory (None)
-                if self.options.data_grouped { Some("tar") } else { None }
-            },
+                if self.options.data_grouped {
+                    Some("tar")
+                } else {
+                    None
+                }
+            }
             ExtractionJobType::FunctionCFG => {
                 // If grouped it's a JSON Lines file (jsonl), otherwise a directory (None)
-                if self.options.data_grouped { Some("jsonl") } else { None }
-            },
-            _ => ExtractionJob::get_output_extension(&job_type) // fallback to static extensions
+                if self.options.data_grouped {
+                    Some("jsonl")
+                } else {
+                    None
+                }
+            }
+            _ => ExtractionJob::get_output_extension(&job_type), // fallback to static extensions
         };
-        
+
         let ext_str = ext.map_or("".to_string(), |e| format!(".{}", e));
         let mut output_filename = self.get_file_name()?;
 
@@ -1496,24 +1504,30 @@ impl FileToBeProcessed {
             if self.options.data_grouped {
                 // Determine what the directory would be called without the .tar or .jsonl extension
                 let cache_dir = output_path.with_extension("");
-                
+
                 if cache_dir.is_dir() {
                     info!("Found existing unpacked directory at {:?}. Packaging directly without R2Pipe...", cache_dir);
-                    
-                    // [i] We only have TAR implemented right now, but this prepares us 
+
+                    // [i] We only have TAR implemented right now, but this prepares us
                     //     for JSONL and other formats in the future
                     if output_path.extension().and_then(|e| e.to_str()) == Some("tar") {
                         match self.archive_directory_to_tar(&cache_dir, &output_path) {
                             Ok(_) => {
-                                info!("Successfully archived existing directory to {:?}", output_path);
+                                info!(
+                                    "Successfully archived existing directory to {:?}",
+                                    output_path
+                                );
                                 // Clean up the old directory to save space
                                 // TODO: could implement ExtractionOption to disable this
                                 //       if users want to keep the unpacked data
                                 if let Err(e) = std::fs::remove_dir_all(&cache_dir) {
-                                    warn!("Failed to remove cache directory {:?}: {}", cache_dir, e);
+                                    warn!(
+                                        "Failed to remove cache directory {:?}: {}",
+                                        cache_dir, e
+                                    );
                                 }
                                 continue; // Skip R2Pipe analysis and extraction entirely!
-                            },
+                            }
                             Err(e) => {
                                 error!("Failed to archive existing directory: {}", e);
                                 // Fall through to normal extraction if archiving fails
@@ -1522,7 +1536,6 @@ impl FileToBeProcessed {
                     }
                 }
             }
-
 
             // Lazily initialize r2p if not already done.
             maybe_r2p = match self.ensure_r2_pipe(maybe_r2p, 5) {
@@ -2129,11 +2142,11 @@ impl FileToBeProcessed {
 
         let file_name = self.get_file_name()?;
         let functions = self.get_function_list(r2p)?;
-        
+
         // Define working directory:
         // - If data_grouped enabled: extract to a temporary directory first to preserve
         //                            resume capabilities then archive it in the end
-        // - Else: directly extract to the output directory since files are 
+        // - Else: directly extract to the output directory since files are
         //         separate and can be resumed individually
         let working_dir = if self.options.data_grouped {
             // If data is grouped output_path should look like:
@@ -2142,8 +2155,8 @@ impl FileToBeProcessed {
             // - `file-name_bytes.part` so we can reuse existing cache if extraction
             //   was already run without the data_grouped flag enabled.
             let complete_path = output_path
-            .with_extension("") // removes .part extension
-            .with_extension(""); // removes .tar extension
+                .with_extension("") // removes .part extension
+                .with_extension(""); // removes .tar extension
             let partial_path = complete_path.with_extension("part");
 
             // Check if extraction was already complete
@@ -2201,8 +2214,8 @@ impl FileToBeProcessed {
         };
 
         // Extract functions with resume logic:
-        // - skip function files that already exist, 
-        // - log errors to separate files, and 
+        // - skip function files that already exist,
+        // - log errors to separate files, and
         // - keep track of aggregate stats
         self.extract_functions_with_resume(
             r2p,
@@ -2234,8 +2247,9 @@ impl FileToBeProcessed {
             info!("Archiving extracted bytes to {:?}", output_path);
             self.archive_directory_to_tar(&working_dir, output_path)?;
             // Clean up the temporary directory
-            std::fs::remove_dir_all(&working_dir)
-                .with_context(|| format!("Failed to remove temporary directory {:?}", working_dir))?;
+            std::fs::remove_dir_all(&working_dir).with_context(|| {
+                format!("Failed to remove temporary directory {:?}", working_dir)
+            })?;
         }
 
         info!(
@@ -2472,23 +2486,25 @@ impl FileToBeProcessed {
         let tar_file = std::fs::File::create(target_tar)
             .with_context(|| format!("Failed to create tar file {:?}", target_tar))?;
         let mut tar_builder = tar::Builder::new(tar_file);
-        
+
         // Append the contents of working_dir into the root of the TAR
         for entry in std::fs::read_dir(src_dir)
-            .with_context(|| format!("Failed to read working directory {:?}", src_dir))? 
+            .with_context(|| format!("Failed to read working directory {:?}", src_dir))?
         {
             let entry = entry.with_context(|| "Failed to read directory entry")?;
             let path = entry.path();
             if path.is_file() {
                 let file_name = path.file_name().context("Failed to extract file name")?;
-                tar_builder.append_path_with_name(&path, file_name)
+                tar_builder
+                    .append_path_with_name(&path, file_name)
                     .with_context(|| format!("Failed to append file {:?} to tar", path))?;
             }
         }
 
-        tar_builder.into_inner()
+        tar_builder
+            .into_inner()
             .with_context(|| "Failed to finish writing TAR archive")?;
-            
+
         Ok(())
     }
 
