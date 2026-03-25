@@ -652,7 +652,9 @@ impl ExtractionJob {
         }
 
         // Warn the user if mode-specific flags are turned on for no reason
-        if !extraction_job_types.contains(&ExtractionJobType::Decompilation) && extraction_options.with_annotations {
+        if !extraction_job_types.contains(&ExtractionJobType::Decompilation)
+            && extraction_options.with_annotations
+        {
             let mode = ExtractionJob::get_job_type_suffix(&ExtractionJobType::Decompilation);
             warn!(
                 "Annotations are only supported for decompilation extraction (mode: {})",
@@ -1396,8 +1398,11 @@ impl FileToBeProcessed {
 
         // Write function records
         for function in functions {
-            let output_path =
-                function.get_output_filepath(output_dirpath, &self.options.func_filename_template, ext);
+            let output_path = function.get_output_filepath(
+                output_dirpath,
+                &self.options.func_filename_template,
+                ext,
+            );
             writer.write_record([
                 &function.name,
                 &function.addr.to_string(),
@@ -1711,8 +1716,11 @@ impl FileToBeProcessed {
 
             // Check if each required file exists
             for ext in &extensions {
-                let file_path =
-                    function.get_output_filepath(output_dirpath, &self.options.func_filename_template, ext);
+                let file_path = function.get_output_filepath(
+                    output_dirpath,
+                    &self.options.func_filename_template,
+                    ext,
+                );
                 required_files_exist.push(file_path.exists());
             }
 
