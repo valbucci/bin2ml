@@ -118,8 +118,7 @@ pub struct ExtractionOptions {
     pub with_annotations: bool,
     pub min_basic_blocks: Option<u16>,
     pub func_filename_template: String,
-    pub bytes_to_tar: bool,
-    pub func_cfg_to_json: bool,
+    pub data_grouped: bool,
 }
 
 #[derive(Debug)]
