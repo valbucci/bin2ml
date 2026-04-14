@@ -1498,6 +1498,23 @@ impl FileToBeProcessed {
                     job_type_suffix, self.file_path, error_path
                 );
                 continue;
+            } else if job_type == &ExtractionJobType::FunctionBytes {
+                // Special case: if the masked bytes file exists, we can skip even if the error log exists
+                let job_type_suffix_masked = ExtractionJob::get_job_type_suffix(&ExtractionJobType::FunctionBytesMasked);
+                let masked_bytes_path = match self.get_output_filepath(&job_type_suffix_masked) {
+                    Ok(path) => path,
+                    Err(e) => {
+                        error!("Failed to get output filepath for function bytes masked: {}", e);
+                        continue;
+                    }
+                };
+                if masked_bytes_path.exists() {
+                    info!(
+                        "Skipping {:?} job for {:?}: already processed (masked bytes file exists) at {:?}.",
+                        job_type_suffix, self.file_path, masked_bytes_path
+                    );
+                    continue;
+                }
             }
 
             // Avoid using R2Pipe if the data is already cached in an unpacked format
@@ -1978,8 +1995,8 @@ impl FileToBeProcessed {
                 }
 
                 let complete_path = PathBuf::from(output_path_str.clone());
-                let partial_path = complete_path.with_extension("part");
-
+                let partial_path = PathBuf::from(format!("{}.part", output_path_str));
+                
                 if complete_path.exists() {
                     info!("Found existing complete output directory at {:?}. Skipping extraction and using this cache for packaging.", complete_path);
                     complete_path
@@ -2046,8 +2063,13 @@ impl FileToBeProcessed {
                 // Preserve the index
                 let index_src = working_dir.join(format!("00-func-index_{}.csv", job_type_suffix));
                 // Creates `bin-name_func-cfg.index.csv` right next to the `.jsonl` file
+                let mut base_dest_str = working_dir.to_string_lossy().to_string();
+                if base_dest_str.ends_with(".part") {
+                    base_dest_str = base_dest_str.strip_suffix(".part").unwrap().to_string();
+                }
                 let index_dest =
-                    PathBuf::from(format!("{}.index.csv", working_dir.to_string_lossy()));
+                    PathBuf::from(format!("{}.index.csv", base_dest_str));
+
                 if index_src.exists() && std::fs::copy(&index_src, &index_dest).is_ok() {
                     info!("Preserved function index at {:?}", index_dest);
                 } else {
@@ -2252,18 +2274,17 @@ impl FileToBeProcessed {
             // We want to change this to:
             // - `file-name_bytes.part` so we can reuse existing cache if extraction
             //   was already run without the data_grouped flag enabled.
-            let output_path_str = output_path.to_string_lossy().to_string();
-            let mut complete_path_str = "";
-            if output_path_str.ends_with(".part") {
+            let mut complete_path_str = output_path.to_string_lossy().to_string();
+            if complete_path_str.ends_with(".part") {
                 // Remove the .part extension to check for existing complete directory
-                complete_path_str = output_path_str.strip_suffix(".part").unwrap();
+                complete_path_str = complete_path_str.strip_suffix(".part").unwrap().to_string();
             }
             if complete_path_str.ends_with(".tar") {
                 // Remove the .tar extension to check for unpacked directory
-                complete_path_str = complete_path_str.strip_suffix(".tar").unwrap();
+                complete_path_str = complete_path_str.strip_suffix(".tar").unwrap().to_string();
             }
-            let complete_path = PathBuf::from(complete_path_str);
-            let partial_path = PathBuf::from(format!("{}.part", complete_path_str));
+            let complete_path = PathBuf::from(&complete_path_str);
+            let partial_path = PathBuf::from(format!("{}.part", &complete_path_str));
 
             // Check if extraction was already complete
             if complete_path.is_dir() {
