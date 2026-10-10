@@ -29,8 +29,6 @@ use std::string::String;
 use std::sync::mpsc::channel;
 #[cfg(feature = "inference")]
 use std::sync::Arc;
-#[cfg(feature = "inference")]
-use tch::nn::func;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct AGFJFile {
@@ -59,20 +57,29 @@ impl AGFJFile {
     /// `agfj` is the radare2 command used to generate the `cfg` data. The code for this
     /// can be found in extract.rs.
     pub fn load_and_deserialize(&mut self) -> Result<(), ()> {
-        let data = read_to_string(&self.filename).expect("Unable to read file");
+        //let data = read_to_string(&self.filename).expect("Unable to read file");
 
         // Kept in to ensure that the JSON decode error message is printed alongside the filename
-        let json = serde_json::from_str(&data);
+        //let json = serde_json::from_str(&data);
 
-        if json.is_ok() {
-            self.functions = Some(json.unwrap());
+        let file = File::open(&self.filename).expect("Unable to read file");
+        let json = serde_json::from_reader(file);
 
-            self.architecture = self.detect_architecture();
+        match json {
+            Ok(_) => {
+                debug!("Successfully parsed JSON data in {:?}", &self.filename);
+                self.functions = Some(json.unwrap());
+                self.architecture = self.detect_architecture();
 
-            Ok(())
-        } else {
-            Err(())
-        }
+                return Ok(());
+            }
+            Err(error) => {
+                error!("Could not parse JSON data in {:?}", &self.filename);
+                eprintln!("Error message: {:?}", error);
+
+                return Err(());
+            }
+        };
     }
 
     /// Detects the architecture of a file by iterating through the functions

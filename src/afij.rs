@@ -55,7 +55,7 @@ pub struct Callref {
     pub addr: String,
     #[serde(rename = "type")]
     pub type_field: String,
-    pub at: i64,
+    pub at: u64,
 }
 
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -67,10 +67,10 @@ pub struct Dataref {
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Codexref {
-    pub addr: i64,
+    pub addr: u64,
     #[serde(rename = "type")]
     pub type_field: String,
-    pub at: i64,
+    pub at: u64,
 }
 
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -88,7 +88,7 @@ pub struct Bpvar {
 #[serde(rename_all = "camelCase")]
 pub struct Ref {
     pub base: String,
-    pub offset: i64,
+    pub offset: u64,
 }
 
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]

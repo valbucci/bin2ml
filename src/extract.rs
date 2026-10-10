@@ -241,7 +241,7 @@ pub struct Bpvar {
 #[serde(rename_all = "camelCase")]
 pub struct Ref {
     pub base: String,
-    pub offset: i64,
+    pub offset: u64,
 }
 
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -294,9 +294,9 @@ pub struct AEAFJRegisterBehaviour {
 pub struct FunctionXrefDetails {
     #[serde(rename = "type")]
     pub type_field: String,
-    pub at: i64,
+    pub at: u64,
     #[serde(rename = "ref")]
-    pub ref_field: i128,
+    pub ref_field: u64,
     pub name: String,
 }
 
@@ -403,13 +403,13 @@ pub struct DecompJSON {
 
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Annotation {
-    pub start: i64,
-    pub end: i64,
+    pub start: u64,
+    pub end: u64,
     #[serde(rename = "type")]
     pub type_field: String,
     pub syntax_highlight: Option<String>,
     pub name: Option<String>,
-    pub offset: Option<i64>,
+    pub offset: Option<u64>,
 }
 
 // Structs  for pdgsd - Ghidra PCode JSON output
@@ -544,7 +544,7 @@ pub struct FunctionZignature {
     pub bytes: String, // hexadecimal function bytes
     pub mask: String,  // hexadecimal
     pub graph: GraphEntry,
-    pub addr: i64,
+    pub addr: u64,
     pub next: Option<String>,
     pub types: String,
     pub refs: Vec<String>,
@@ -1500,11 +1500,15 @@ impl FileToBeProcessed {
                 continue;
             } else if job_type == &ExtractionJobType::FunctionBytes {
                 // Special case: if the masked bytes file exists, we can skip even if the error log exists
-                let job_type_suffix_masked = ExtractionJob::get_job_type_suffix(&ExtractionJobType::FunctionBytesMasked);
+                let job_type_suffix_masked =
+                    ExtractionJob::get_job_type_suffix(&ExtractionJobType::FunctionBytesMasked);
                 let masked_bytes_path = match self.get_output_filepath(&job_type_suffix_masked) {
                     Ok(path) => path,
                     Err(e) => {
-                        error!("Failed to get output filepath for function bytes masked: {}", e);
+                        error!(
+                            "Failed to get output filepath for function bytes masked: {}",
+                            e
+                        );
                         continue;
                     }
                 };
@@ -1996,7 +2000,7 @@ impl FileToBeProcessed {
 
                 let complete_path = PathBuf::from(output_path_str.clone());
                 let partial_path = PathBuf::from(format!("{}.part", output_path_str));
-                
+
                 if complete_path.exists() {
                     info!("Found existing complete output directory at {:?}. Skipping extraction and using this cache for packaging.", complete_path);
                     complete_path
@@ -2067,8 +2071,7 @@ impl FileToBeProcessed {
                 if base_dest_str.ends_with(".part") {
                     base_dest_str = base_dest_str.strip_suffix(".part").unwrap().to_string();
                 }
-                let index_dest =
-                    PathBuf::from(format!("{}.index.csv", base_dest_str));
+                let index_dest = PathBuf::from(format!("{}.index.csv", base_dest_str));
 
                 if index_src.exists() && std::fs::copy(&index_src, &index_dest).is_ok() {
                     info!("Preserved function index at {:?}", index_dest);

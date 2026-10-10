@@ -16,7 +16,7 @@ use serde_json;
 #[cfg(feature = "inference")]
 use serde_json::{Map, Value};
 use std::fs::File;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 #[cfg(feature = "inference")]
 use std::process::exit;
 #[cfg(feature = "inference")]
@@ -30,9 +30,9 @@ struct EdgesList {
 
 #[derive(Deserialize, Debug, Eq, Ord, PartialEq, PartialOrd)]
 struct EdgePair {
-    src: u16,
-    dest: u16,
-    wt: u16,
+    src: u64,
+    dest: u64,
+    wt: u64,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -300,7 +300,7 @@ impl AGFJFunc {
         if self.blocks.len() >= <u16 as Into<usize>>::into(*min_blocks)
             && self.blocks[0].offset != 1
         {
-            let bb_start_addrs: Vec<i64> = self.blocks.iter().map(|x| x.offset).collect::<Vec<_>>();
+            let bb_start_addrs: Vec<u64> = self.blocks.iter().map(|x| x.offset).collect::<Vec<_>>();
             let mut edge_list = Vec::<(u32, u32, u32)>::new();
 
             let mut feature_vecs = Vec::<_>::new();

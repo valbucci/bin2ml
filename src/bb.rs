@@ -73,9 +73,9 @@ pub struct SwitchOpCase {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct SwitchOp {
     pub cases: Vec<SwitchOpCase>,
-    pub defval: u16,
-    pub maxval: u16,
-    pub minval: u16,
+    pub defval: u64,
+    pub maxval: u64,
+    pub minval: u64,
     #[serde(alias = "addr")]
     pub offset: u64,
 }

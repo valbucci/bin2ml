@@ -34,9 +34,9 @@ struct EdgesList {
 
 #[derive(Deserialize, Debug, Eq, Ord, PartialEq, PartialOrd)]
 struct EdgePair {
-    src: u16,
-    dest: u16,
-    wt: u16,
+    src: u64,
+    dest: u64,
+    wt: u64,
 }
 
 #[allow(clippy::too_many_arguments)]
