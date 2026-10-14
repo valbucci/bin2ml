@@ -1,22 +1,25 @@
-use std::ffi::OsStr;
 use std::path::Path;
 use std::process::exit;
+
+use crate::utils::get_file_extension;
 
 pub fn validate_input(filepath: &Path, command: &str) {
     check_file_is_json(filepath);
     check_file_is_expected_type(filepath, command)
 }
 
-fn check_file_is_json(filepath: &Path) {
-    debug!("Filepath: {}", filepath.display());
-    let file_extension = filepath.extension();
+fn check_file_is_json(file_path: &Path) {
+    debug!("Filepath: {}", file_path.display());
+    let expected_extensions = ["json", "jsonl"];
+    let file_extension = get_file_extension(&file_path);
     debug!("File extension: {:?}", file_extension);
-    if Some(OsStr::new("json")) == file_extension {
+
+    if expected_extensions.contains(&file_extension) {
         debug!("Found the correct file format!")
     } else {
         error!(
             "Incorrect file type passed. Expected file to end with .json not {}",
-            file_extension.unwrap().to_string_lossy()
+            file_extension
         );
         exit(1)
     }
@@ -31,6 +34,7 @@ fn check_file_is_expected_type(filepath: &Path, command: &str) {
         x if x.contains("_xrefs.json") => "crossrefs",
         x if x.contains("_cg.json") => "callgraph",
         x if x.contains("_cfg.json") => "controlflow",
+        x if x.contains("_func-cfg.jsonl") => "controlflow",
         x if x.contains("_finfo.json") => "function_info",
         x if x.contains("_pcode-func.json") => "pcode",
         x if x.contains("_pcode-bb.json") => "pcode",

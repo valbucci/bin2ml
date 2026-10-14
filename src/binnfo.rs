@@ -1,6 +1,6 @@
 use goblin::{error, Object};
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 pub fn goblin_info(fpath: &PathBuf) -> error::Result<()> {
     let buffer = fs::read(fpath)?;

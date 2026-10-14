@@ -8,8 +8,6 @@ use crate::inference::InferenceJob;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 #[cfg(feature = "inference")]
-use std::process::exit;
-#[cfg(feature = "inference")]
 use std::sync::Arc;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

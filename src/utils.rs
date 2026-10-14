@@ -171,6 +171,15 @@ pub fn get_default_addr() -> u64 {
     u64::MAX
 }
 
+/// Return the file extension or empty string
+pub fn get_file_extension(file_path: &Path) -> &str {
+    let extension = file_path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .unwrap_or("");
+    return extension;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

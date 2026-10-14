@@ -350,7 +350,10 @@ impl AGFJFunc {
                     )
                 };
 
-                let file_name = path.file_name().unwrap();
+                let file_name = path
+                    .file_name()
+                    .and_then(|filename| filename.to_str())
+                    .unwrap_or("");
                 let binary_name: Vec<_> = file_name.split(".j").collect();
 
                 let fname_string = format!(
@@ -787,63 +790,59 @@ mod tests {
         // Check to see if the length is correct - Expect 40 functions
         assert_eq!(file.functions.as_ref().unwrap().len(), 40);
         // Check to see if the first function has length 1
-        assert_eq!(file.functions.as_ref().unwrap()[0].len(), 1);
+        assert_eq!(file.functions.as_ref().unwrap().len(), 1);
         // Check to attributes of first function
-        assert_eq!(file.functions.as_ref().unwrap()[0][0].name, "main");
-        assert_eq!(file.functions.as_ref().unwrap()[0][0].offset, 4294980912);
-        assert_eq!(file.functions.as_ref().unwrap()[0][0].ninstr, 78);
-        assert_eq!(file.functions.as_ref().unwrap()[0][0].nargs, 2);
-        assert_eq!(file.functions.as_ref().unwrap()[0][0].nlocals, 0);
-        assert_eq!(file.functions.as_ref().unwrap()[0][0].size, 334);
-        assert_eq!(file.functions.as_ref().unwrap()[0][0].stack, 56);
-        assert!(!file.functions.as_ref().unwrap()[0][0].blocks.is_empty());
+        assert_eq!(file.functions.as_ref().unwrap()[0].name, "main");
+        assert_eq!(file.functions.as_ref().unwrap()[0].offset, 4294980912);
+        assert_eq!(file.functions.as_ref().unwrap()[0].ninstr, 78);
+        assert_eq!(file.functions.as_ref().unwrap()[0].nargs, 2);
+        assert_eq!(file.functions.as_ref().unwrap()[0].nlocals, 0);
+        assert_eq!(file.functions.as_ref().unwrap()[0].size, 334);
+        assert_eq!(file.functions.as_ref().unwrap()[0].stack, 56);
+        assert!(!file.functions.as_ref().unwrap()[0].blocks.is_empty());
 
         // Check first function has correct number of blocks - Expect 18
-        assert_eq!(file.functions.as_ref().unwrap()[0][0].blocks.len(), 18);
+        assert_eq!(file.functions.as_ref().unwrap()[0].blocks.len(), 18);
 
         // Check the first block in the first function has the expected features
         assert_eq!(
-            file.functions.as_ref().unwrap()[0][0].blocks[0].offset,
+            file.functions.as_ref().unwrap()[0].blocks[0].offset,
             4294980912
         );
         assert_eq!(
-            file.functions.as_ref().unwrap()[0][0].blocks[0].jump,
+            file.functions.as_ref().unwrap()[0].blocks[0].jump,
             4294980968
         );
-        assert!(!file.functions.as_ref().unwrap()[0][0].blocks[0]
-            .ops
-            .is_empty());
+        assert!(!file.functions.as_ref().unwrap()[0].blocks[0].ops.is_empty());
         assert_eq!(
-            file.functions.as_ref().unwrap()[0][0].blocks[0].fail,
+            file.functions.as_ref().unwrap()[0].blocks[0].fail,
             get_default_addr()
         );
 
-        assert!(file.functions.as_ref().unwrap()[0][0].blocks[0]
+        assert!(file.functions.as_ref().unwrap()[0].blocks[0]
             .switchop
             .is_none());
 
         // Check the second block in the first function has the expected features
         assert_eq!(
-            file.functions.as_ref().unwrap()[0][0].blocks[1].offset,
+            file.functions.as_ref().unwrap()[0].blocks[1].offset,
             4294980968
         );
         assert_eq!(
-            file.functions.as_ref().unwrap()[0][0].blocks[1].jump,
+            file.functions.as_ref().unwrap()[0].blocks[1].jump,
             4294981019
         );
-        assert!(!file.functions.as_ref().unwrap()[0][0].blocks[1]
-            .ops
-            .is_empty());
+        assert!(!file.functions.as_ref().unwrap()[0].blocks[1].ops.is_empty());
         assert_eq!(
-            file.functions.as_ref().unwrap()[0][0].blocks[1].fail,
+            file.functions.as_ref().unwrap()[0].blocks[1].fail,
             4294980986
         );
-        assert!(file.functions.as_ref().unwrap()[0][0].blocks[1]
+        assert!(file.functions.as_ref().unwrap()[0].blocks[1]
             .switchop
             .is_none());
 
         // Check switchops handled correctly when present
-        assert!(file.functions.as_ref().unwrap()[0][0].blocks[3]
+        assert!(file.functions.as_ref().unwrap()[0].blocks[3]
             .switchop
             .is_some());
     }
@@ -862,7 +861,7 @@ mod tests {
         };
 
         file.load_and_deserialize().unwrap();
-        let target_func = &mut file.functions.unwrap()[9][0];
+        let target_func = &mut file.functions.unwrap()[9];
 
         // Check we have targetted the correct function
         assert_eq!(target_func.name, "main");

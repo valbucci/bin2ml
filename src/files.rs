@@ -9,6 +9,7 @@ use crate::inference::InferenceJob;
 use crate::networkx::{
     CallGraphFuncWithMetadata, CallGraphTikNibFeatures, CallGraphTypes, NetworkxDiGraph,
 };
+use crate::utils::get_file_extension;
 use crate::utils::get_save_file_path;
 use enum_as_inner::EnumAsInner;
 use indicatif::ParallelProgressIterator;
@@ -23,7 +24,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::HashMap;
 use std::fs::{read_to_string, File};
-use std::io::{BufWriter, Write};
+use std::io::{BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::string::String;
 use std::sync::mpsc::channel;
@@ -33,7 +34,7 @@ use std::sync::Arc;
 #[derive(Serialize, Deserialize, Debug)]
 pub struct AGFJFile {
     pub filename: PathBuf,
-    pub functions: Option<Vec<Vec<AGFJFunc>>>,
+    pub functions: Option<Vec<AGFJFunc>>,
     pub output_path: PathBuf,
     pub min_blocks: u16,
     pub feature_type: Option<FeatureType>,
@@ -51,35 +52,66 @@ pub enum FormatMode {
 impl AGFJFile {
     // Allowed to enable propagation of errors from both reading to wstring and serde from str.
     #[allow(clippy::result_unit_err)]
-    /// Loads and desearializes an AGFJ JSON file into a Vec<Vec<AGFJFunc>> and
+    /// Loads and desearializes an AGFJ JSON/JSONL file into a Vec<AGFJFunc> and
     /// then detects the architecure of the functions stored within
     ///
     /// `agfj` is the radare2 command used to generate the `cfg` data. The code for this
     /// can be found in extract.rs.
     pub fn load_and_deserialize(&mut self) -> Result<(), ()> {
-        //let data = read_to_string(&self.filename).expect("Unable to read file");
+        // We either expect a JSON or a JSONL file.
+        // This function will route the request accordingly
 
-        // Kept in to ensure that the JSON decode error message is printed alongside the filename
-        //let json = serde_json::from_str(&data);
-
-        let file = File::open(&self.filename).expect("Unable to read file");
-        let json = serde_json::from_reader(file);
-
-        match json {
-            Ok(_) => {
-                debug!("Successfully parsed JSON data in {:?}", &self.filename);
-                self.functions = Some(json.unwrap());
-                self.architecture = self.detect_architecture();
-
-                return Ok(());
-            }
+        let file = match File::open(&self.filename) {
+            Ok(_file) => _file,
             Err(error) => {
-                error!("Could not parse JSON data in {:?}", &self.filename);
-                eprintln!("Error message: {:?}", error);
-
+                error!("Problem opening the file: {error:?}");
                 return Err(());
             }
         };
+        let file_ext = get_file_extension(&self.filename);
+        match file_ext {
+            "json" => self.load_and_deserialize_json(file),
+            "jsonl" => self.load_and_deserialize_jsonl(file),
+            _ => {
+                error!("Cannot process the extension '{file_ext:?}'");
+                return Err(());
+            }
+        }?;
+
+        self.architecture = self.detect_architecture();
+        Ok(())
+    }
+
+    pub fn load_and_deserialize_json(&mut self, file: File) -> Result<(), ()> {
+        let functions: Vec<Vec<AGFJFunc>> = serde_json::from_reader(file).map_err(|error| {
+            error!("Could not parse JSON data in {:?}", &self.filename);
+            eprintln!("Error message: {:?}", error);
+        })?;
+
+        debug!("Successfully parsed JSON data in {:?}", &self.filename);
+        self.functions = Some(
+            functions
+                .into_iter()
+                .map(|func_vec| func_vec.into_iter().next())
+                .collect::<Option<Vec<_>>>()
+                .ok_or(())?,
+        );
+
+        Ok(())
+    }
+
+    pub fn load_and_deserialize_jsonl(&mut self, file: File) -> Result<(), ()> {
+        let functions: Result<Vec<AGFJFunc>, _> = serde_json::Deserializer::from_reader(file)
+            .into_iter()
+            .collect();
+
+        self.functions = Some(functions.map_err(|error| {
+            error!("Could not parse JSONL data in {:?}", &self.filename);
+            eprintln!("Error message: {:?}", error);
+        })?);
+
+        debug!("Successfully parsed JSON data in {:?}", &self.filename);
+        Ok(())
     }
 
     /// Detects the architecture of a file by iterating through the functions
@@ -89,7 +121,7 @@ impl AGFJFile {
         let mut call_op: Option<String> = None;
 
         for func in self.functions.as_ref().unwrap() {
-            for block in &func[0].blocks {
+            for block in &func.blocks {
                 for op in &block.ops {
                     if op.r#type == "call" || op.r#type == "rcall" {
                         call_op = Some(op.disasm.as_ref().unwrap().clone())
@@ -172,14 +204,9 @@ impl AGFJFile {
 
             self.functions.unwrap().par_iter_mut().for_each_with(
                 sender,
-                |s, func: &mut Vec<AGFJFunc>| {
-                    s.send(func[0].disasm_random_walks(
-                        &self.min_blocks,
-                        esil,
-                        self.reg_norm,
-                        pairs,
-                    ))
-                    .unwrap()
+                |s, func: &mut AGFJFunc| {
+                    s.send(func.disasm_random_walks(&self.min_blocks, esil, self.reg_norm, pairs))
+                        .unwrap()
                 },
             );
 
@@ -220,8 +247,8 @@ impl AGFJFile {
 
                 self.functions.unwrap().par_iter_mut().for_each_with(
                     sender,
-                    |s, func: &mut Vec<AGFJFunc>| {
-                        s.send(func[0].get_esil_function_string(&self.min_blocks, self.reg_norm))
+                    |s, func: &mut AGFJFunc| {
+                        s.send(func.get_esil_function_string(&self.min_blocks, self.reg_norm))
                             .unwrap()
                     },
                 );
@@ -263,8 +290,8 @@ impl AGFJFile {
                     .unwrap()
                     .par_iter_mut()
                     .progress()
-                    .for_each_with(sender, |s, func: &mut Vec<AGFJFunc>| {
-                        s.send(func[0].get_disasm_function_string(&self.min_blocks, self.reg_norm))
+                    .for_each_with(sender, |s, func: &mut AGFJFunc| {
+                        s.send(func.get_disasm_function_string(&self.min_blocks, self.reg_norm))
                             .unwrap()
                     });
 
@@ -306,8 +333,8 @@ impl AGFJFile {
 
             self.functions.unwrap().par_iter_mut().for_each_with(
                 sender,
-                |s, func: &mut Vec<AGFJFunc>| {
-                    s.send(func[0].get_function_instructions(esil, &self.min_blocks, self.reg_norm))
+                |s, func: &mut AGFJFunc| {
+                    s.send(func.get_function_instructions(esil, &self.min_blocks, self.reg_norm))
                         .unwrap()
                 },
             );
@@ -339,7 +366,7 @@ impl AGFJFile {
             );
         }
         self.functions.unwrap().par_iter().for_each(|func| {
-            func[0].generate_attributed_cfg(
+            func.generate_attributed_cfg(
                 &self.filename,
                 &self.min_blocks,
                 &self.output_path,
@@ -355,7 +382,7 @@ impl AGFJFile {
         let mut func_feature_vectors = Vec::new();
 
         for func in self.functions.unwrap().iter() {
-            let feature_vec = func[0].generate_tiknib_cfg_global_features(arch.as_ref().unwrap());
+            let feature_vec = func.generate_tiknib_cfg_global_features(arch.as_ref().unwrap());
             func_feature_vectors.push(feature_vec);
         }
 
@@ -381,7 +408,7 @@ impl AGFJFile {
 
         if inference_job.is_some() {
             self.functions.unwrap().par_iter().for_each(|func| {
-                func[0].generate_embedded_cfg(
+                func.generate_embedded_cfg(
                     &self.filename,
                     &self.min_blocks,
                     &self.output_path,
